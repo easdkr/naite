@@ -40,13 +40,9 @@ impl App {
                 Task::none()
             }
             terminal::Message::NewSessionRequested => {
-                let Some(target) = self.active_terminal_target() else {
+                let Some((target, label)) = self.new_terminal_session_target() else {
                     return Task::none();
                 };
-                let label = target
-                    .worktree_hint
-                    .clone()
-                    .unwrap_or_else(|| "Terminal".into());
                 let (cols, rows) = self.terminal_dimensions();
                 let id = self.terminal.create_session(
                     target,
@@ -174,6 +170,19 @@ impl App {
         let id = self.terminal.ensure_session(path, label);
         self.terminal.open = true;
         self.start_terminal_session(id)
+    }
+
+    pub(crate) fn ensure_repo_terminal_session(
+        &mut self,
+        path: std::path::PathBuf,
+        label: String,
+    ) -> Task<Message> {
+        let id = self.terminal.ensure_session(path, label);
+        if self.terminal.open {
+            self.start_terminal_session(id)
+        } else {
+            Task::none()
+        }
     }
 
     pub(crate) fn resize_active_terminal_to_window(&mut self) {
@@ -385,16 +394,35 @@ impl App {
         }
     }
 
-    fn active_terminal_target(&self) -> Option<TerminalTarget> {
-        self.terminal
-            .active_session()
-            .map(|session| session.target.clone())
-            .or_else(|| {
-                self.repo
-                    .path
+    fn new_terminal_session_target(&self) -> Option<(TerminalTarget, String)> {
+        if let Some(session) = self.terminal.active_session() {
+            let cwd = session
+                .shell_cwd
+                .clone()
+                .unwrap_or_else(|| session.target.cwd.clone());
+            let target = TerminalTarget::new(
+                cwd,
+                session
+                    .target
+                    .repo_tab
                     .clone()
-                    .map(|path| TerminalTarget::new(path, self.repo.path.clone(), None))
-            })
+                    .or_else(|| self.repo.path.clone()),
+                session.target.worktree_hint.clone(),
+            );
+            return Some((target, session.label.clone()));
+        }
+
+        self.repo.path.clone().map(|path| {
+            let label = self
+                .repo
+                .head_branch
+                .clone()
+                .unwrap_or_else(|| "Current repo".into());
+            (
+                TerminalTarget::new(path, self.repo.path.clone(), None),
+                label,
+            )
+        })
     }
 
     fn terminal_dimensions(&self) -> (u16, u16) {

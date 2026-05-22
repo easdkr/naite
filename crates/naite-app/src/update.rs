@@ -1225,15 +1225,17 @@ impl App {
                     self.operation.error = None;
                     self.operation.loading = false;
                     self.refresh_graph_layout();
-                    if let Some(path) = self.repo.path.clone() {
-                        self.terminal.ensure_session(
+                    let terminal_task = if let Some(path) = self.repo.path.clone() {
+                        self.ensure_repo_terminal_session(
                             path,
                             self.repo
                                 .head_branch
                                 .clone()
                                 .unwrap_or_else(|| "Current repo".into()),
-                        );
-                    }
+                        )
+                    } else {
+                        Task::none()
+                    };
 
                     let refresh_task = if self.should_refresh_tab(&target) {
                         self.spawn_tab_refresh(target)
@@ -1245,7 +1247,12 @@ impl App {
                     } else {
                         Task::none()
                     };
-                    Task::batch([self.save_open_tabs(), refresh_task, select_task])
+                    Task::batch([
+                        self.save_open_tabs(),
+                        terminal_task,
+                        refresh_task,
+                        select_task,
+                    ])
                 } else {
                     self.update(Message::from(repo_open::Message::OpenRecent(target)))
                 }
@@ -1265,15 +1272,17 @@ impl App {
                         self.operation.error = None;
                         self.operation.loading = false;
                         self.refresh_graph_layout();
-                        if let Some(path) = self.repo.path.clone() {
-                            self.terminal.ensure_session(
+                        let terminal_task = if let Some(path) = self.repo.path.clone() {
+                            self.ensure_repo_terminal_session(
                                 path,
                                 self.repo
                                     .head_branch
                                     .clone()
                                     .unwrap_or_else(|| "Current repo".into()),
-                            );
-                        }
+                            )
+                        } else {
+                            Task::none()
+                        };
 
                         let refresh_task = if self.should_refresh_tab(&new_active) {
                             self.spawn_tab_refresh(new_active)
@@ -1285,7 +1294,12 @@ impl App {
                         } else {
                             Task::none()
                         };
-                        Task::batch([self.save_open_tabs(), refresh_task, select_task])
+                        Task::batch([
+                            self.save_open_tabs(),
+                            terminal_task,
+                            refresh_task,
+                            select_task,
+                        ])
                     } else {
                         self.repo = RepositoryState::default();
                         self.update(Message::from(repo_open::Message::OpenRecent(new_active)))

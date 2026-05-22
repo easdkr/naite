@@ -30,13 +30,17 @@ const TAB_LABEL_MAX_CHARS: usize = 18;
 pub fn terminal_panel<'a>(
     terminal_state: &'a TerminalState,
     repo_path: Option<&'a Path>,
-    head_branch: Option<&'a str>,
-    worktrees: &'a [WorktreeSummary],
+    _head_branch: Option<&'a str>,
+    _worktrees: &'a [WorktreeSummary],
     _input_id: &'a iced::widget::text_input::Id,
 ) -> Element<'a, Message> {
     let Some(session) = terminal_state.active_session() else {
         return empty_terminal(repo_path);
     };
+    let session_cwd = session
+        .shell_cwd
+        .as_deref()
+        .unwrap_or(session.target.cwd.as_path());
 
     let title_label = column![
         text("TERMINAL")
@@ -45,7 +49,7 @@ pub fn terminal_panel<'a>(
             .wrapping(Wrapping::None)
             .color(color::TEXT_SUBTLE),
         text(truncate_middle(
-            &session.target.cwd.display().to_string(),
+            &session_cwd.display().to_string(),
             PATH_LABEL_MAX_CHARS,
         ))
         .size(theme::FS_SM)
@@ -80,7 +84,7 @@ pub fn terminal_panel<'a>(
         .width(Length::Fill)
         .style(styles::hairline_divider);
 
-    let tabs = tab_strip(terminal_state, repo_path, head_branch, worktrees);
+    let tabs = tab_strip(terminal_state, repo_path);
     let controls = row![tabs, Space::with_width(Length::Fill)]
         .spacing(theme::SP_SM)
         .align_y(Alignment::Center);
@@ -101,20 +105,13 @@ pub fn terminal_panel<'a>(
 fn tab_strip<'a>(
     terminal_state: &'a TerminalState,
     repo_path: Option<&'a Path>,
-    head_branch: Option<&'a str>,
-    worktrees: &'a [WorktreeSummary],
 ) -> Element<'a, Message> {
     let mut row_widget = row![].spacing(4).align_y(Alignment::Center);
     for session in &terminal_state.sessions {
         let active = terminal_state.active == Some(session.id);
         row_widget = row_widget.push(tab_chip(session, active));
     }
-    row_widget = row_widget.push(new_tab_button(
-        repo_path,
-        head_branch,
-        worktrees,
-        terminal_state,
-    ));
+    row_widget = row_widget.push(new_tab_button(repo_path, terminal_state));
     row_widget.into()
 }
 
@@ -159,12 +156,8 @@ fn tab_chip<'a>(session: &'a TerminalSession, active: bool) -> Element<'a, Messa
 
 fn new_tab_button<'a>(
     repo_path: Option<&'a Path>,
-    head_branch: Option<&'a str>,
-    worktrees: &'a [WorktreeSummary],
     terminal_state: &'a TerminalState,
 ) -> Element<'a, Message> {
-    let target = next_new_session_target(repo_path, head_branch, worktrees, terminal_state);
-
     let label = text("+")
         .size(theme::FS_MD)
         .font(theme::font_semibold())
@@ -174,50 +167,10 @@ fn new_tab_button<'a>(
     let mut btn = button(label)
         .padding(Padding::from([2, 8]))
         .style(styles::tab_strip_button(false));
-    if let Some(selection) = target {
-        btn = btn.on_press(Message::from(terminal::Message::SessionSelected(selection)));
+    if terminal_state.active_session().is_some() || repo_path.is_some() {
+        btn = btn.on_press(Message::from(terminal::Message::NewSessionRequested));
     }
     btn.into()
-}
-
-/// Picks the most useful target for a new tab: prefers a worktree the user has
-/// not opened yet, then the current repo, falling back to "new shell in cwd".
-fn next_new_session_target(
-    repo_path: Option<&Path>,
-    head_branch: Option<&str>,
-    worktrees: &[WorktreeSummary],
-    terminal_state: &TerminalState,
-) -> Option<SessionSelection> {
-    let in_use = |path: &Path| {
-        terminal_state
-            .sessions
-            .iter()
-            .any(|session| session.target.cwd == path)
-    };
-
-    for worktree in worktrees {
-        if !in_use(&worktree.path) {
-            let label = worktree
-                .branch
-                .clone()
-                .unwrap_or_else(|| format!("HEAD {}", worktree.head_short_id));
-            return Some(SessionSelection::Target {
-                cwd: worktree.path.clone(),
-                label: label.clone(),
-                worktree_hint: Some(label),
-            });
-        }
-    }
-
-    let path = repo_path?;
-    let label = head_branch
-        .map(|b| b.to_string())
-        .unwrap_or_else(|| "Current repo".into());
-    Some(SessionSelection::Target {
-        cwd: path.to_path_buf(),
-        label,
-        worktree_hint: None,
-    })
 }
 
 fn terminal_viewport<'a>(session: &'a TerminalSession) -> Element<'a, Message> {

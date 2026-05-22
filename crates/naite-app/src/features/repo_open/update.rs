@@ -117,7 +117,7 @@ impl App {
                     self.tabs
                         .last_refreshed
                         .insert(path.clone(), std::time::Instant::now());
-                    self.terminal.ensure_session(
+                    let terminal_task = self.ensure_repo_terminal_session(
                         path.clone(),
                         self.repo
                             .head_branch
@@ -148,6 +148,7 @@ impl App {
                         pull_request_task,
                         commit_avatar_task,
                         provider_commit_avatar_task,
+                        terminal_task,
                         auto_fetch_task,
                         select_task,
                     ])

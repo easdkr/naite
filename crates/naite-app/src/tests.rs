@@ -29,7 +29,7 @@ use crate::state::{
     BranchCreateBase, BranchCreateState, BranchManageRenameState, CommandPaletteState,
     CommitFormState, DiffViewMode, OperationState, ReleasePrepPhase, ReleasePrepState,
     RepositoryState, SelectionState, SidebarClickState, SidebarSection, StashBranchState,
-    TagNameMode, TransientStatus, UndoCheckpoint,
+    TagNameMode, TerminalStatus, TransientStatus, UndoCheckpoint,
 };
 use crate::subscription::{app_event, keyboard_shortcut, terminal_app_event};
 use crate::{
@@ -81,6 +81,21 @@ fn staged_status_detail() -> WorktreeStatusDetail {
         }],
         ..Default::default()
     }
+}
+
+fn loaded_repo(path: impl Into<PathBuf>, branch: &str) -> repo_open::LoadedRepo {
+    (
+        path.into(),
+        vec![commit("a111111", "add app shell", "june")],
+        None,
+        Refs::default(),
+        vec![],
+        vec![],
+        Some(branch.into()),
+        WorktreeStatusDetail::default(),
+        BranchSyncStatus::default(),
+        GitOperationState::default(),
+    )
 }
 
 fn worktree_summary(path: &str, branch: &str) -> WorktreeSummary {
@@ -462,6 +477,101 @@ fn repo_load_with_upstream_starts_auto_fetch() {
         Some(Path::new("/tmp/naite"))
     );
     assert!(!app.operation.loading);
+}
+
+#[test]
+fn repo_load_starts_terminal_session_when_panel_is_open() {
+    let path = PathBuf::from("/tmp/naite-terminal-open");
+    let mut app = App::default();
+    app.terminal.open = true;
+
+    let _ = app.update(Message::from(repo_open::Message::Loaded(Box::new(Ok(
+        loaded_repo(path.clone(), "main"),
+    )))));
+
+    let session = app.terminal.active_session().unwrap();
+    assert_eq!(session.target.cwd, path);
+    assert_eq!(session.status, TerminalStatus::Starting);
+    assert!(session.pending_start);
+}
+
+#[test]
+fn repo_load_keeps_terminal_session_idle_when_panel_is_closed() {
+    let path = PathBuf::from("/tmp/naite-terminal-closed");
+    let mut app = App::default();
+
+    let _ = app.update(Message::from(repo_open::Message::Loaded(Box::new(Ok(
+        loaded_repo(path.clone(), "main"),
+    )))));
+
+    let session = app.terminal.active_session().unwrap();
+    assert_eq!(session.target.cwd, path);
+    assert_eq!(session.status, TerminalStatus::Idle);
+    assert!(!session.pending_start);
+}
+
+#[test]
+fn cached_tab_activation_starts_terminal_session_when_panel_is_open() {
+    let active_path = PathBuf::from("/tmp/naite-active");
+    let cached_path = PathBuf::from("/tmp/naite-cached");
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(active_path.clone()),
+            head_branch: Some("main".into()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    app.tabs.open = vec![active_path.clone(), cached_path.clone()];
+    app.tabs.active = Some(active_path);
+    app.tabs.cache.insert(
+        cached_path.clone(),
+        RepositoryState {
+            path: Some(cached_path.clone()),
+            head_branch: Some("feature/cached".into()),
+            ..Default::default()
+        },
+    );
+    app.terminal.open = true;
+
+    let _ = app.update(Message::from(TabsMessage::Activate(cached_path.clone())));
+
+    let session = app.terminal.active_session().unwrap();
+    assert_eq!(session.target.cwd, cached_path);
+    assert_eq!(session.status, TerminalStatus::Starting);
+    assert!(session.pending_start);
+}
+
+#[test]
+fn closing_active_tab_starts_new_active_terminal_session_when_panel_is_open() {
+    let active_path = PathBuf::from("/tmp/naite-active");
+    let cached_path = PathBuf::from("/tmp/naite-cached");
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(active_path.clone()),
+            head_branch: Some("main".into()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    app.tabs.open = vec![active_path.clone(), cached_path.clone()];
+    app.tabs.active = Some(active_path.clone());
+    app.tabs.cache.insert(
+        cached_path.clone(),
+        RepositoryState {
+            path: Some(cached_path.clone()),
+            head_branch: Some("feature/cached".into()),
+            ..Default::default()
+        },
+    );
+    app.terminal.open = true;
+
+    let _ = app.update(Message::from(TabsMessage::Close(active_path)));
+
+    let session = app.terminal.active_session().unwrap();
+    assert_eq!(session.target.cwd, cached_path);
+    assert_eq!(session.status, TerminalStatus::Starting);
+    assert!(session.pending_start);
 }
 
 #[test]
@@ -6050,6 +6160,8 @@ fn worktree_selection_clears_git_selection_and_creates_terminal_session() {
     assert!(!app.selection.selected_wip);
     let active = app.terminal.active_session().unwrap();
     assert_eq!(active.target.cwd, target.path);
+    assert_eq!(active.status, TerminalStatus::Idle);
+    assert!(!active.pending_start);
 }
 
 #[test]
@@ -6147,6 +6259,53 @@ fn terminal_command_palette_item_shows_keyboard_shortcut() {
 
     assert_eq!(item.shortcut, "Cmd `");
     assert!(item.enabled());
+}
+
+#[test]
+fn terminal_new_session_uses_active_shell_cwd() {
+    let repo_path = PathBuf::from("/tmp/naite");
+    let shell_cwd = repo_path.join("crates/naite-app");
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(repo_path.clone()),
+            head_branch: Some("main".into()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let first_id = app
+        .terminal
+        .ensure_session(repo_path.clone(), "main".into());
+    app.terminal.session_mut(first_id).unwrap().shell_cwd = Some(shell_cwd.clone());
+
+    let _ = app.update(Message::from(terminal::Message::NewSessionRequested));
+
+    let session = app.terminal.active_session().unwrap();
+    assert_ne!(session.id, first_id);
+    assert_eq!(session.target.cwd, shell_cwd);
+    assert_eq!(session.target.repo_tab, Some(repo_path));
+    assert_eq!(session.status, TerminalStatus::Starting);
+    assert!(session.pending_start);
+}
+
+#[test]
+fn terminal_new_session_without_active_session_uses_repo_root() {
+    let repo_path = PathBuf::from("/tmp/naite");
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(repo_path.clone()),
+            head_branch: Some("main".into()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let _ = app.update(Message::from(terminal::Message::NewSessionRequested));
+
+    let session = app.terminal.active_session().unwrap();
+    assert_eq!(session.target.cwd, repo_path.clone());
+    assert_eq!(session.target.repo_tab, Some(repo_path));
+    assert_eq!(session.label, "main");
 }
 
 #[test]
