@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use iced::widget::{button, container, row, text, text::Wrapping, text_input, tooltip, Space};
+use iced::widget::{button, container, row, svg, text, text::Wrapping, text_input, tooltip, Space};
 use iced::{Alignment, Element, Length, Padding};
 use naite_core::{BranchSyncStatus, StashSummary, WorktreeStatusDetail};
 
@@ -14,6 +14,8 @@ use crate::theme::{self, color};
 use crate::Message;
 
 pub const TOOLBAR_HEIGHT: f32 = 44.0;
+const TOOLBAR_LOGO_SIZE: f32 = 28.0;
+const TOOLBAR_LOGO_SVG: &[u8] = include_bytes!("../../assets/app-icon.svg");
 
 pub struct ToolbarProps<'a> {
     pub repo_path: Option<&'a Path>,
@@ -47,11 +49,9 @@ pub fn toolbar<'a>(props: ToolbarProps<'a>) -> Element<'a, Message> {
     } = props;
     let action_mode = toolbar_action_mode(window_width);
 
-    let title = text("naite")
-        .size(theme::FS_XL)
-        .font(theme::font_semibold())
-        .wrapping(Wrapping::None)
-        .color(color::TEXT);
+    let title = svg(svg::Handle::from_memory(TOOLBAR_LOGO_SVG))
+        .width(Length::Fixed(TOOLBAR_LOGO_SIZE))
+        .height(Length::Fixed(TOOLBAR_LOGO_SIZE));
 
     let branch_chip: Element<'a, Message> = match (repo_path, head_branch) {
         (Some(_), Some(name)) => {
