@@ -17,26 +17,6 @@ Git 인증 정보나 GitHub 토큰을 직접 설정하거나 보관하지 않습
   사용할 수 있습니다. 먼저 `gh auth login`으로 로그인하고, 필요하면
   `gh auth status`로 현재 인증 상태를 확인하세요.
 
-## 현재 상태
-
-나이테는 읽기 전용 실험 단계를 지나, 로컬 저장소를 열거나 찾고, 최근
-저장소와 즐겨찾기를 다시 열고, 기존 폴더 초기화와 클론을 수행할 수
-있습니다. refs, 기본 커밋 그래프, 커밋 필터, first-parent diff, dirty
-worktree 경고가 있는 로컬 브랜치 checkout을 지원합니다.
-
-현재 WIP row와 상태 패널은 ignored/submodule 그룹을 구분하고, 파일별 WIP
-diff를 hunk 단위로 보여줍니다. diff는 unified, focused-hunk, inline,
-split 모드로 전환할 수 있고, 파일과 텍스트 hunk 단위 stage/unstage/discard,
-amend/co-author/skip-hooks/commit-then-push 옵션이 있는 commit 생성을
-지원합니다.
-
-쓰기 기능은 의도적으로 좁게 유지합니다. clone, init, 로컬 브랜치
-checkout/create/rename/delete, stash create/apply/pop/drop/branch, 현재 브랜치
-fetch/pull/push, merge/rebase, tag, worktree, workspace, repo-scoped terminal,
-GitHub PR/issue 흐름은 지원하지만, provider 인증은 사용자의 기존 `gh`
-설정에 의존합니다. non-GitHub provider, PR merge, workspace-wide PR
-aggregation, 완전한 terminal emulation은 아직 포함하지 않습니다.
-
 ## 나이테만의 특수 기능
 
 나이테는 모든 Git GUI를 그대로 복제하려는 도구가 아닙니다. 레이어처럼
@@ -72,12 +52,32 @@ aggregation, 완전한 terminal emulation은 아직 포함하지 않습니다.
   ahead/behind count, worktree count, last fetch age를 요약하고 multi-repo
   fetch/pull/open/locate/remove를 지원합니다.
 - **Repo-scoped terminal panel:** terminal session은 global shell이 아니라
-  활성 repository 또는 worktree에 붙습니다. session, cwd, shell status, last
-  command/exit state, zsh integration event, history, path completion, Git
-  subcommand suggestion을 추적합니다.
+  활성 repository 또는 worktree에 붙고, 실행 상태와 shell context를 앱
+  안에서 추적합니다.
 - **Local-first provider boundary:** Git 읽기/쓰기는 `naite-core`에 있고,
   provider 기능은 사용자의 기존 `gh` 설정을 통합니다. cloud sync,
   telemetry, token storage, server-side source upload는 추가하지 않습니다.
+
+## 터미널 기능
+
+나이테의 터미널은 저장소 작업을 위해 앱 안에 붙어 있는 repo-scoped command
+panel입니다. 독립적인 시스템 터미널을 완전히 대체하기보다, 현재 보고 있는
+repository나 worktree에서 바로 명령을 실행하고 결과 맥락을 이어가기 위한
+기능입니다.
+
+- 활성 repository 또는 선택한 worktree의 경로를 기준으로 terminal session을
+  엽니다.
+- 여러 session을 만들고 전환하며, session별 label, shell, cwd, 실행 상태,
+  마지막 명령, 마지막 exit code를 유지합니다.
+- 실행 중인 명령에 interrupt/kill/close를 보낼 수 있고, 종료된 session은
+  다시 시작할 수 있습니다.
+- zsh integration을 통해 shell cwd, command history, command lifecycle
+  event를 받아 앱 상태와 동기화합니다.
+- 입력 중인 command에 대해 zsh history, session history, path completion,
+  Git subcommand suggestion을 제공합니다.
+- terminal session은 repository/worktree context에 묶이므로, PR checkout
+  worktree나 workspace dashboard에서 열린 저장소의 후속 작업을 바로 이어갈
+  수 있습니다.
 
 ## 기술 스택
 
