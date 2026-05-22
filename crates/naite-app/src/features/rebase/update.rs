@@ -7,7 +7,7 @@ use crate::features::rebase::{
     self, task::ApplyOutcome, DragState, InteractiveRebaseSession, Message as RebaseMessage,
     RebaseApplyMode, RebasePlanPreset,
 };
-use crate::features::repo_open;
+use crate::features::{release_prep, repo_open};
 use crate::state::ReleasePrepPhase;
 use crate::tasks;
 use crate::{App, Message, RebasePrompt};
@@ -378,16 +378,35 @@ impl App {
         if !can_apply(session) {
             return Task::none();
         }
-        if apply_mode == RebaseApplyMode::RebaseThenForcePush {
-            if let Err(message) = self.force_push_prompt_for_current_branch() {
-                self.operation.error = Some(message);
-                return Task::none();
+        match apply_mode {
+            RebaseApplyMode::RebaseOnly => {}
+            RebaseApplyMode::RebaseThenForcePush => {
+                if self.release_prep.active_profile.is_some() {
+                    self.operation.error = Some(
+                        "release promotion applies the rebase locally; push the target, then sync the source"
+                            .into(),
+                    );
+                    return Task::none();
+                }
+                if let Err(message) = self.force_push_prompt_for_current_branch() {
+                    self.operation.error = Some(message);
+                    return Task::none();
+                }
+            }
+            RebaseApplyMode::ReleasePromotionAuto => {
+                if self.release_prep.active_profile.is_none() {
+                    self.operation.error = Some("Plan a release promotion first".into());
+                    return Task::none();
+                }
             }
         }
         let follow_up = match apply_mode {
             RebaseApplyMode::RebaseOnly => "",
             RebaseApplyMode::RebaseThenForcePush => {
                 " After it succeeds, naite will ask before running git push --force-with-lease."
+            }
+            RebaseApplyMode::ReleasePromotionAuto => {
+                " After it succeeds, naite will update and push the target, then rebase and push the source."
             }
         };
         self.selection.rebase_confirmation = Some(RebasePrompt {
@@ -432,6 +451,8 @@ impl App {
         self.operation.error = None;
         self.operation.loading = true;
         self.operation.pending_force_push_after_reload = false;
+        self.release_prep.auto_running = false;
+        self.release_prep.auto_next_action = None;
 
         Task::perform(
             rebase::task::apply_plan(path, target_ref, entries, reword_messages),
@@ -453,14 +474,24 @@ impl App {
                 self.rebase = None;
                 self.selection.rebase_confirmation = None;
                 let pending_force_push = apply_mode == RebaseApplyMode::RebaseThenForcePush;
+                let pending_auto_promotion = apply_mode == RebaseApplyMode::ReleasePromotionAuto;
                 if self.release_prep.active_profile.is_some() {
                     self.release_prep.phase = ReleasePrepPhase::Actions;
                     self.release_prep.animation_frame = 0;
+                }
+                if pending_auto_promotion {
+                    self.release_prep.auto_running = true;
+                    self.release_prep.auto_next_action =
+                        Some(release_prep::ReleasePrepAction::UpdateTargetFromSource);
+                    self.release_prep.active_action = None;
+                    self.release_prep.completed_actions.clear();
                 }
                 if let Some(path) = self.repo.path.clone() {
                     self.operation.pending_transient_status_after_reload = Some(
                         if pending_force_push {
                             "Interactive rebase applied; confirm force push"
+                        } else if pending_auto_promotion {
+                            "Interactive rebase applied; starting auto promotion"
                         } else {
                             "Interactive rebase applied"
                         }

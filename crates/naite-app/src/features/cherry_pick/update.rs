@@ -25,6 +25,7 @@ impl App {
         self.operation.transient_status = None;
         self.operation.pending_transient_status_after_reload = None;
         self.operation.loading = true;
+        self.selection.context_menu = None;
         let commit_for_message = commit.clone();
         Task::perform(
             cherry_pick::task::run(path, commit.id.clone()),

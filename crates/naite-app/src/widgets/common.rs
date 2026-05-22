@@ -38,14 +38,18 @@ pub(super) fn error_card<'a>(
     let mut actions = row![].align_y(Alignment::Center).spacing(theme::SP_SM);
     if let Some(recovery) = recovery {
         actions = actions.push(
-            button(text(recovery.label).size(theme::FS_SM))
-                .padding(Padding::from([4, 8]))
-                .style(styles::danger_button)
-                .on_press(recovery.message),
+            button(
+                text(recovery.label)
+                    .size(theme::FS_SM)
+                    .wrapping(Wrapping::None),
+            )
+            .padding(Padding::from([4, 8]))
+            .style(styles::danger_button)
+            .on_press(recovery.message),
         );
     }
     actions = actions.push(
-        button(text("Dismiss").size(theme::FS_SM))
+        button(text("Dismiss").size(theme::FS_SM).wrapping(Wrapping::None))
             .padding(Padding::from([4, 8]))
             .style(styles::subtle_button)
             .on_press(Message::ClearError),
@@ -53,14 +57,17 @@ pub(super) fn error_card<'a>(
 
     container(
         row![
-            text(format!("Error: {err}"))
-                .size(theme::FS_BASE)
-                .font(theme::font_regular())
-                .color(color::DANGER),
-            Space::with_width(Length::Fill),
+            container(
+                text(format!("Error: {err}"))
+                    .size(theme::FS_BASE)
+                    .font(theme::font_regular())
+                    .color(color::DANGER),
+            )
+            .width(Length::Fill),
             actions,
         ]
-        .align_y(Alignment::Center),
+        .align_y(Alignment::Center)
+        .spacing(theme::SP_MD),
     )
     .padding(theme::SP_LG)
     .style(styles::error_card)

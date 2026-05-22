@@ -141,6 +141,11 @@ impl App {
                     } else {
                         Task::none()
                     };
+                    let release_auto_task = if self.operation.error.is_none() {
+                        self.continue_release_prep_auto()
+                    } else {
+                        Task::none()
+                    };
                     Task::batch([
                         save_task,
                         save_tabs_task,
@@ -151,12 +156,15 @@ impl App {
                         terminal_task,
                         auto_fetch_task,
                         select_task,
+                        release_auto_task,
                     ])
                 }
                 Err(msg) => {
                     self.operation.pending_transient_status_after_reload = None;
                     self.operation.pending_error_after_reload = None;
                     self.operation.pending_force_push_after_reload = false;
+                    self.release_prep.auto_running = false;
+                    self.release_prep.auto_next_action = None;
                     self.operation.loading = false;
                     self.repo.commits_loading_more = false;
                     self.operation.error = Some(msg);

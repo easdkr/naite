@@ -12,6 +12,7 @@ use naite_core::{
 };
 
 use crate::{
+    features::release_prep::ReleasePrepAction,
     features::terminal::{TerminalSessionId, TerminalTarget},
     BranchDeletePrompt, CheckoutPrompt, DiscardPrompt, ForcePushPrompt, ForceSyncPrompt,
     HistoryPrompt, RebasePrompt, ResetPrompt, StashPrompt, TagDeletePrompt, UndoPrompt,
@@ -100,6 +101,9 @@ pub enum ContextMenuKind {
         kind: WorktreeDiffKind,
     },
     RecentRepo(PathBuf),
+    PushMenu {
+        force_with_lease_available: bool,
+    },
     StashMenu {
         dirty: bool,
         latest_stash: Option<StashSummary>,
@@ -316,6 +320,10 @@ pub struct ReleasePrepState {
     pub suggestion: Option<ReleaseProfileSuggestion>,
     pub sync_check: Option<ReleaseSyncCheck>,
     pub active_profile: Option<ReleaseProfile>,
+    pub auto_running: bool,
+    pub auto_next_action: Option<ReleasePrepAction>,
+    pub active_action: Option<ReleasePrepAction>,
+    pub completed_actions: Vec<ReleasePrepAction>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

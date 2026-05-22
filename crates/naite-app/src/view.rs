@@ -1,7 +1,10 @@
 use iced::widget::{column, container, pane_grid, stack, Space};
 use iced::{Element, Length, Size};
 
-use crate::features::{checkout, pull_request, push, release_prep};
+use crate::features::{
+    checkout, discard, history, pull_request, push, rebase, release_prep, reset, stash, tag,
+    worktree,
+};
 use crate::message::Message;
 use crate::state::ReleasePrepPhase;
 use crate::widgets;
@@ -80,7 +83,11 @@ impl App {
                 }),
                 PaneId::List => {
                     if let Some(session) = &self.rebase {
-                        widgets::rebase_editor(session, self.selection.cursor_position)
+                        widgets::rebase_editor(
+                            session,
+                            self.selection.cursor_position,
+                            self.release_prep.active_profile.is_some(),
+                        )
                     } else if self.workspace.dashboard_open {
                         widgets::workspace_dashboard(
                             &self.workspace,
@@ -260,45 +267,6 @@ impl App {
             ));
         }
 
-        if let Some(prompt) = &self.selection.checkout_confirmation {
-            root = root.push(widgets::checkout_prompt(prompt));
-        }
-
-        if let Some(prompt) = &self.selection.discard_confirmation {
-            root = root.push(widgets::discard_prompt(prompt, self.operation.loading));
-        }
-
-        if let Some(prompt) = &self.selection.stash_confirmation {
-            root = root.push(widgets::stash_prompt(prompt, self.operation.loading));
-        }
-
-        if let Some(prompt) = &self.selection.history_confirmation {
-            root = root.push(widgets::history_prompt(prompt, self.operation.loading));
-        }
-
-        if let Some(prompt) = &self.selection.rebase_confirmation {
-            root = root.push(widgets::rebase_prompt(prompt, self.operation.loading));
-        }
-
-        if let Some(prompt) = &self.selection.reset_confirmation {
-            root = root.push(widgets::reset_prompt(prompt, self.operation.loading));
-        }
-
-        if let Some(prompt) = &self.selection.tag_delete_confirmation {
-            root = root.push(widgets::tag_delete_prompt(prompt, self.operation.loading));
-        }
-
-        if let Some(prompt) = &self.selection.undo_confirmation {
-            root = root.push(widgets::undo_prompt(prompt, self.operation.loading));
-        }
-
-        if let Some(prompt) = &self.selection.worktree_remove_confirmation {
-            root = root.push(widgets::worktree_remove_prompt(
-                prompt,
-                self.operation.loading,
-            ));
-        }
-
         root = root.push(container(pane_grid).height(Length::Fill));
 
         let base: Element<'_, Message> = root.into();
@@ -356,6 +324,69 @@ impl App {
             overlays.push(widgets::modal(
                 widgets::branch_delete_prompt(prompt, self.operation.loading),
                 Message::from(crate::features::branch_manage::Message::DeleteCancelled),
+            ));
+        }
+
+        if let Some(prompt) = &self.selection.checkout_confirmation {
+            overlays.push(widgets::modal(
+                widgets::checkout_prompt(prompt),
+                Message::from(checkout::Message::Cancelled),
+            ));
+        }
+
+        if let Some(prompt) = &self.selection.discard_confirmation {
+            overlays.push(widgets::modal(
+                widgets::discard_prompt(prompt, self.operation.loading),
+                Message::from(discard::Message::Cancelled),
+            ));
+        }
+
+        if let Some(prompt) = &self.selection.stash_confirmation {
+            overlays.push(widgets::modal(
+                widgets::stash_prompt(prompt, self.operation.loading),
+                Message::from(stash::Message::ConfirmationCancelled),
+            ));
+        }
+
+        if let Some(prompt) = &self.selection.history_confirmation {
+            overlays.push(widgets::modal(
+                widgets::history_prompt(prompt, self.operation.loading),
+                Message::from(history::Message::Cancelled),
+            ));
+        }
+
+        if let Some(prompt) = &self.selection.rebase_confirmation {
+            overlays.push(widgets::modal(
+                widgets::rebase_prompt(prompt, self.operation.loading),
+                Message::from(rebase::Message::ApplyCancelled),
+            ));
+        }
+
+        if let Some(prompt) = &self.selection.reset_confirmation {
+            overlays.push(widgets::modal(
+                widgets::reset_prompt(prompt, self.operation.loading),
+                Message::from(reset::Message::Cancelled),
+            ));
+        }
+
+        if let Some(prompt) = &self.selection.tag_delete_confirmation {
+            overlays.push(widgets::modal(
+                widgets::tag_delete_prompt(prompt, self.operation.loading),
+                Message::from(tag::Message::DeleteCancelled),
+            ));
+        }
+
+        if let Some(prompt) = &self.selection.undo_confirmation {
+            overlays.push(widgets::modal(
+                widgets::undo_prompt(prompt, self.operation.loading),
+                Message::from(history::Message::UndoCancelled),
+            ));
+        }
+
+        if let Some(prompt) = &self.selection.worktree_remove_confirmation {
+            overlays.push(widgets::modal(
+                widgets::worktree_remove_prompt(prompt, self.operation.loading),
+                Message::from(worktree::Message::RemoveCancelled),
             ));
         }
 

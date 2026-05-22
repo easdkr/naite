@@ -181,9 +181,14 @@ pub fn release_prep_actions(state: &ReleasePrepState, loading: bool) -> Element<
     .spacing(theme::SP_MD);
 
     if loading {
+        let running_label = state
+            .active_action
+            .map(|action| format!("Running: {}", action.label()))
+            .unwrap_or_else(|| "Running release action".to_string());
         body = body.push(moving_progress_bar(state.animation_frame)).push(
             text(format!(
-                "Running release action{}",
+                "{}{}",
+                running_label,
                 animated_dots(state.animation_frame)
             ))
             .size(theme::FS_SM)
@@ -198,34 +203,179 @@ pub fn release_prep_actions(state: &ReleasePrepState, loading: bool) -> Element<
             .push(sync_row("Target", &sync.target));
     }
 
-    let action = |label: &'static str, action: ReleasePrepAction| {
-        button(text(label).size(theme::FS_SM))
-            .padding(Padding::from([5, 10]))
-            .style(styles::primary_button)
-            .on_press_maybe((!loading).then_some(Message::from(
-                release_prep::Message::ActionRequested(action),
-            )))
+    let auto_running = state.auto_running;
+    let auto_complete = release_prep_complete(state);
+    let auto_enabled =
+        !loading && state.active_profile.is_some() && !auto_running && !auto_complete;
+    let actions_locked = loading || auto_running;
+    let auto_label_text = if auto_running {
+        if let Some(active) = state.active_action {
+            format!("Auto promotion running: {}", active.label())
+        } else if let Some(next) = state.auto_next_action {
+            format!("Auto promotion — next: {}", next.label())
+        } else {
+            "Auto promotion finishing…".to_string()
+        }
+    } else if auto_complete {
+        "Auto promotion complete".to_string()
+    } else {
+        "Run remaining steps automatically".to_string()
+    };
+    let auto_button_label = if auto_running {
+        "Running…"
+    } else if auto_complete {
+        "Complete"
+    } else {
+        "Run all"
     };
 
     body.push(
         column![
-            action(
+            section_label("Guided mode"),
+            action_row(
                 "Update target from source",
-                ReleasePrepAction::UpdateTargetFromSource
+                ReleasePrepAction::UpdateTargetFromSource,
+                state,
+                actions_locked,
             ),
-            action("Push target", ReleasePrepAction::PushTarget),
-            action(
-                "Sync source from target",
-                ReleasePrepAction::SyncSourceFromTarget
+            action_row(
+                "Push target",
+                ReleasePrepAction::PushTarget,
+                state,
+                actions_locked,
             ),
-            button(text("Close").size(theme::FS_SM))
-                .padding(Padding::from([5, 10]))
-                .style(styles::subtle_button)
-                .on_press(Message::from(release_prep::Message::Cancelled)),
+            action_row(
+                "Rebase source onto target",
+                ReleasePrepAction::SyncSourceFromTarget,
+                state,
+                actions_locked,
+            ),
         ]
         .spacing(theme::SP_SM),
     )
+    .push(
+        column![
+            section_label("Auto mode"),
+            container(
+                row![
+                    text(auto_label_text)
+                        .size(theme::FS_SM)
+                        .font(theme::font_regular())
+                        .color(if auto_running {
+                            color::ACCENT
+                        } else {
+                            color::TEXT
+                        }),
+                    Space::with_width(Length::Fill),
+                    button(text(auto_button_label).size(theme::FS_SM))
+                        .padding(Padding::from([5, 10]))
+                        .style(styles::danger_button)
+                        .on_press_maybe(
+                            auto_enabled
+                                .then_some(Message::from(release_prep::Message::AutoRequested))
+                        ),
+                ]
+                .align_y(Alignment::Center),
+            )
+            .padding(Padding::from([6, 8]))
+            .style(styles::inset_card),
+        ]
+        .spacing(theme::SP_SM),
+    )
+    .push(
+        row![
+            Space::with_width(Length::Fill),
+            button(text("Close").size(theme::FS_SM))
+                .padding(Padding::from([5, 10]))
+                .style(styles::subtle_button)
+                .on_press_maybe(
+                    (!auto_running).then_some(Message::from(release_prep::Message::Cancelled))
+                ),
+        ]
+        .align_y(Alignment::Center),
+    )
     .into()
+}
+
+fn section_label(label: &str) -> Element<'_, Message> {
+    text(label)
+        .size(theme::FS_XS)
+        .font(theme::font_semibold())
+        .color(color::TEXT_SUBTLE)
+        .into()
+}
+
+fn action_row<'a>(
+    label: &'a str,
+    action: ReleasePrepAction,
+    state: &'a ReleasePrepState,
+    locked: bool,
+) -> Element<'a, Message> {
+    let is_active = state.active_action == Some(action);
+    let is_completed = state.completed_actions.contains(&action);
+    let frame = state.animation_frame;
+
+    let (status_glyph, status_color) = if is_active {
+        (spinner_frame(frame).to_string(), color::ACCENT)
+    } else if is_completed {
+        ("✓".to_string(), color::SUCCESS)
+    } else {
+        ("•".to_string(), color::TEXT_SUBTLE)
+    };
+
+    let label_text = if is_active {
+        format!("{label} — running{}", animated_dots(frame))
+    } else if is_completed {
+        format!("{label} — done")
+    } else {
+        label.to_string()
+    };
+
+    let label_color = if is_active {
+        color::ACCENT
+    } else if is_completed {
+        color::TEXT_SUBTLE
+    } else {
+        color::TEXT
+    };
+
+    let button_label = if is_completed { "Done" } else { "Run" };
+    let button_locked = locked || is_completed;
+
+    container(
+        row![
+            text(status_glyph)
+                .size(theme::FS_SM)
+                .font(iced::Font::MONOSPACE)
+                .color(status_color),
+            text(label_text)
+                .size(theme::FS_SM)
+                .font(theme::font_regular())
+                .color(label_color),
+            Space::with_width(Length::Fill),
+            button(text(button_label).size(theme::FS_SM))
+                .padding(Padding::from([5, 10]))
+                .style(styles::primary_button)
+                .on_press_maybe((!button_locked).then_some(Message::from(
+                    release_prep::Message::ActionRequested(action),
+                ))),
+        ]
+        .spacing(theme::SP_SM)
+        .align_y(Alignment::Center),
+    )
+    .padding(Padding::from([6, 8]))
+    .style(styles::inset_card)
+    .into()
+}
+
+fn release_prep_complete(state: &ReleasePrepState) -> bool {
+    [
+        ReleasePrepAction::UpdateTargetFromSource,
+        ReleasePrepAction::PushTarget,
+        ReleasePrepAction::SyncSourceFromTarget,
+    ]
+    .into_iter()
+    .all(|action| state.completed_actions.contains(&action))
 }
 
 fn progress_line<'a>(label: &'a str) -> Element<'a, Message> {
@@ -415,13 +565,12 @@ fn sync_row<'a>(label: &'a str, branch: &'a ReleaseBranchSync) -> Element<'a, Me
 }
 
 fn release_error<'a>(error: &'a str) -> Element<'a, Message> {
+    let message = release_error_message(error);
     container(
-        text(format!(
-            "{error}\n\nRelease promotion could not complete. Check the branch names, worktree state, or Git operation state and retry."
-        ))
-        .size(theme::FS_SM)
-        .font(theme::font_regular())
-        .color(color::DANGER),
+        text(message)
+            .size(theme::FS_SM)
+            .font(theme::font_regular())
+            .color(color::DANGER),
     )
     .padding(theme::SP_MD)
     .width(Length::Fill)
@@ -429,9 +578,38 @@ fn release_error<'a>(error: &'a str) -> Element<'a, Message> {
     .into()
 }
 
+fn release_error_message(error: &str) -> String {
+    if error.contains("cannot lock ref") {
+        return "Remote branch data was updated by another Git operation. Retry release promotion."
+            .into();
+    }
+    if error.starts_with("git command failed: git fetch") {
+        return "Could not fetch the latest remote branches. Check repository access or network state, then retry release promotion.".into();
+    }
+    if error.starts_with("git command failed:") {
+        return "Git could not complete this release step. Check the branch and worktree state, then retry release promotion.".into();
+    }
+    error.to_string()
+}
+
 fn profile_label(profile: &ReleaseProfile) -> String {
     format!(
         "{} / {} -> {}",
         profile.remote, profile.source_branch, profile.target_branch
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn release_error_message_summarizes_fetch_ref_races() {
+        let raw = "git command failed: git fetch origin: error: cannot lock ref 'refs/remotes/origin/staging': is at 414a6de but expected 07343dd";
+
+        assert_eq!(
+            release_error_message(raw),
+            "Remote branch data was updated by another Git operation. Retry release promotion."
+        );
+    }
 }

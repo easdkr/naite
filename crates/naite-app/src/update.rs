@@ -749,6 +749,9 @@ impl App {
                     return Task::none();
                 }
                 if self.release_prep.phase != ReleasePrepPhase::Idle {
+                    if self.release_prep.auto_running {
+                        return Task::none();
+                    }
                     self.release_prep.phase = ReleasePrepPhase::Idle;
                     return Task::none();
                 }

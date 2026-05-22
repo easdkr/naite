@@ -6,7 +6,7 @@ use iced::widget::{button, container, row, svg, text, text::Wrapping, text_input
 use iced::{Alignment, Element, Length, Padding};
 use naite_core::{BranchSyncStatus, StashSummary, WorktreeStatusDetail};
 
-use crate::features::{branch_create, fetch, pull, push, release_prep, repo_open};
+use crate::features::{branch_create, fetch, pull, release_prep, repo_open};
 use crate::icons::{self, IconName};
 use crate::state::ContextMenuKind;
 use crate::styles;
@@ -192,13 +192,15 @@ pub fn toolbar<'a>(props: ToolbarProps<'a>) -> Element<'a, Message> {
     );
 
     let push_enabled = repo_path.is_some() && !loading && head_branch.is_some();
+    let force_push_available =
+        push_enabled && sync_status.upstream.is_some() && !status_detail.is_dirty();
     let push_btn = toolbar_action_button(
         IconName::ChevronUp,
         "Push",
         action_mode,
-        push_enabled.then_some(Message::from(push::Message::Requested(
-            push::PushMode::Normal,
-        ))),
+        push_enabled.then_some(Message::ContextMenuOpened(ContextMenuKind::PushMenu {
+            force_with_lease_available: force_push_available,
+        })),
     );
 
     let open_btn = toolbar_action_button(

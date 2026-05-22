@@ -31,11 +31,19 @@ impl App {
                 Task::none()
             }
             ReleasePrepMessage::Cancelled => {
+                if self.release_prep.auto_running {
+                    return Task::none();
+                }
                 self.release_prep.phase = ReleasePrepPhase::Idle;
+                self.release_prep.auto_running = false;
+                self.release_prep.auto_next_action = None;
+                self.release_prep.active_action = None;
+                self.release_prep.completed_actions.clear();
                 Task::none()
             }
             ReleasePrepMessage::ProfileSubmitted => self.submit_release_prep_profile(),
             ReleasePrepMessage::Prepared(result) => self.finish_release_prepare(*result),
+            ReleasePrepMessage::AutoRequested => self.start_release_prep_auto(),
             ReleasePrepMessage::ActionRequested(action) => self.start_release_prep_action(action),
             ReleasePrepMessage::ActionDone { action, result } => {
                 self.finish_release_prep_action(action, *result)
@@ -128,6 +136,10 @@ impl App {
         self.release_prep.phase = ReleasePrepPhase::Preparing;
         self.release_prep.active_profile = Some(profile.clone());
         self.release_prep.sync_check = None;
+        self.release_prep.auto_running = false;
+        self.release_prep.auto_next_action = None;
+        self.release_prep.active_action = None;
+        self.release_prep.completed_actions.clear();
         self.release_prep.error = None;
         self.release_prep.animation_frame = 0;
         self.operation.loading = true;
@@ -215,6 +227,47 @@ impl App {
     }
 
     fn start_release_prep_action(&mut self, action: ReleasePrepAction) -> Task<Message> {
+        if self.release_prep.auto_running || self.release_prep.completed_actions.contains(&action) {
+            return Task::none();
+        }
+        self.release_prep.auto_running = false;
+        self.release_prep.auto_next_action = None;
+        self.start_release_prep_action_internal(action)
+    }
+
+    pub(crate) fn continue_release_prep_auto(&mut self) -> Task<Message> {
+        if !self.release_prep.auto_running || self.operation.loading {
+            return Task::none();
+        }
+        let Some(action) = self.release_prep.auto_next_action.take() else {
+            self.release_prep.auto_running = false;
+            self.release_prep.phase = ReleasePrepPhase::Actions;
+            self.set_transient_status("Auto promotion complete".into());
+            return Task::none();
+        };
+        self.start_release_prep_action_internal(action)
+    }
+
+    fn start_release_prep_auto(&mut self) -> Task<Message> {
+        if self.release_prep.auto_running {
+            return Task::none();
+        }
+        if self.release_prep.active_profile.is_none() {
+            self.operation.error = Some("Plan a release promotion first".into());
+            return Task::none();
+        }
+        let Some(next_action) =
+            next_incomplete_release_prep_action(&self.release_prep.completed_actions)
+        else {
+            self.set_transient_status("Auto promotion already complete".into());
+            return Task::none();
+        };
+        self.release_prep.auto_running = true;
+        self.release_prep.auto_next_action = Some(next_action);
+        self.continue_release_prep_auto()
+    }
+
+    fn start_release_prep_action_internal(&mut self, action: ReleasePrepAction) -> Task<Message> {
         let Some(path) = self.repo.path.clone() else {
             return Task::none();
         };
@@ -227,6 +280,7 @@ impl App {
         self.operation.loading = true;
         self.operation.error = None;
         self.release_prep.phase = ReleasePrepPhase::RunningAction;
+        self.release_prep.active_action = Some(action);
         self.release_prep.animation_frame = 0;
         Task::perform(
             release_prep::task::run_action(path, profile, action),
@@ -245,13 +299,33 @@ impl App {
         result: Result<naite_core::ReleaseSyncCheck, String>,
     ) -> Task<Message> {
         self.operation.loading = false;
+        self.release_prep.active_action = None;
         match result {
             Ok(sync_check) => {
+                let was_auto_action = self.release_prep.auto_running;
                 self.release_prep.sync_check = Some(sync_check);
                 self.release_prep.phase = ReleasePrepPhase::Actions;
                 self.release_prep.animation_frame = 0;
+                if !self.release_prep.completed_actions.contains(&action) {
+                    self.release_prep.completed_actions.push(action);
+                }
+                if was_auto_action {
+                    self.release_prep.auto_next_action = next_release_prep_action(action);
+                    if self.release_prep.auto_next_action.is_none() {
+                        self.release_prep.auto_running = false;
+                    }
+                }
                 self.operation.pending_transient_status_after_reload =
-                    Some(format!("{} complete", action.label()));
+                    Some(if was_auto_action && self.release_prep.auto_running {
+                        format!("{} complete; continuing auto promotion", action.label())
+                    } else if was_auto_action
+                        && self.release_prep.auto_next_action.is_none()
+                        && action == ReleasePrepAction::SyncSourceFromTarget
+                    {
+                        "Auto promotion complete".into()
+                    } else {
+                        format!("{} complete", action.label())
+                    });
                 if let Some(path) = self.repo.path.clone() {
                     self.operation.loading = true;
                     Task::perform(repo_open::task::load(path), |result| {
@@ -263,6 +337,8 @@ impl App {
                 }
             }
             Err(message) => {
+                self.release_prep.auto_running = false;
+                self.release_prep.auto_next_action = None;
                 self.release_prep.phase = ReleasePrepPhase::Actions;
                 self.release_prep.animation_frame = 0;
                 self.operation.error = Some(message);
@@ -270,6 +346,26 @@ impl App {
             }
         }
     }
+}
+
+fn next_release_prep_action(action: ReleasePrepAction) -> Option<ReleasePrepAction> {
+    match action {
+        ReleasePrepAction::UpdateTargetFromSource => Some(ReleasePrepAction::PushTarget),
+        ReleasePrepAction::PushTarget => Some(ReleasePrepAction::SyncSourceFromTarget),
+        ReleasePrepAction::SyncSourceFromTarget => None,
+    }
+}
+
+fn next_incomplete_release_prep_action(
+    completed_actions: &[ReleasePrepAction],
+) -> Option<ReleasePrepAction> {
+    [
+        ReleasePrepAction::UpdateTargetFromSource,
+        ReleasePrepAction::PushTarget,
+        ReleasePrepAction::SyncSourceFromTarget,
+    ]
+    .into_iter()
+    .find(|action| !completed_actions.contains(action))
 }
 
 fn valid_profile_input(profile: &ReleaseProfile) -> bool {

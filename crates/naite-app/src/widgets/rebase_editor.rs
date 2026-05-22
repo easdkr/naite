@@ -27,9 +27,10 @@ const REBASE_TOOLBAR_HEIGHT: f32 = 52.0;
 pub fn rebase_editor<'a>(
     session: &'a InteractiveRebaseSession,
     cursor: Option<Point>,
+    release_promotion_active: bool,
 ) -> Element<'a, Message> {
     let active_gap = active_insertion_gap(session);
-    let mut body = column![toolbar(session), header()].spacing(0);
+    let mut body = column![toolbar(session, release_promotion_active), header()].spacing(0);
     body = body.push(insertion_gap(active_gap == Some(0)));
     for (index, row) in session.plan.iter().enumerate() {
         body = body.push(plan_row(session, row, index));
@@ -240,7 +241,10 @@ pub fn rebase_detail<'a>(props: RebaseDetailProps<'a>) -> Element<'a, Message> {
         .into()
 }
 
-fn toolbar(session: &InteractiveRebaseSession) -> Element<'_, Message> {
+fn toolbar(
+    session: &InteractiveRebaseSession,
+    release_promotion_active: bool,
+) -> Element<'_, Message> {
     let dropped = session
         .plan
         .iter()
@@ -267,6 +271,62 @@ fn toolbar(session: &InteractiveRebaseSession) -> Element<'_, Message> {
 
     let current_branch = compact_toolbar_label(&session.current_branch.short_name);
 
+    let mut actions = row![
+        button(text("Keep Mine").size(theme::FS_SM))
+            .padding(Padding::from([5, 10]))
+            .style(styles::subtle_button)
+            .on_press_maybe(pick_mine_enabled.then_some(Message::from(
+                rebase::Message::PresetRequested(RebasePlanPreset::KeepMine,)
+            ))),
+        button(text("Squash Mine").size(theme::FS_SM))
+            .padding(Padding::from([5, 10]))
+            .style(styles::subtle_button)
+            .on_press_maybe(pick_mine_enabled.then_some(Message::from(
+                rebase::Message::PresetRequested(RebasePlanPreset::SquashMine,)
+            ))),
+        button(text("Squash All").size(theme::FS_SM))
+            .padding(Padding::from([5, 10]))
+            .style(styles::subtle_button)
+            .on_press_maybe(preset_enabled.then_some(Message::from(
+                rebase::Message::PresetRequested(RebasePlanPreset::SquashAll,)
+            ))),
+        button(text("Apply").size(theme::FS_SM))
+            .padding(Padding::from([5, 10]))
+            .style(styles::primary_button)
+            .on_press_maybe(apply_enabled.then_some(Message::from(
+                rebase::Message::ApplyRequested(RebaseApplyMode::RebaseOnly,)
+            ))),
+    ]
+    .align_y(Alignment::Center)
+    .spacing(theme::SP_MD);
+
+    if release_promotion_active {
+        actions = actions.push(
+            button(text("Auto Promote").size(theme::FS_SM))
+                .padding(Padding::from([5, 10]))
+                .style(styles::danger_button)
+                .on_press_maybe(apply_enabled.then_some(Message::from(
+                    rebase::Message::ApplyRequested(RebaseApplyMode::ReleasePromotionAuto),
+                ))),
+        );
+    } else {
+        actions = actions.push(
+            button(text("Apply + Push").size(theme::FS_SM))
+                .padding(Padding::from([5, 10]))
+                .style(styles::danger_button)
+                .on_press_maybe(apply_enabled.then_some(Message::from(
+                    rebase::Message::ApplyRequested(RebaseApplyMode::RebaseThenForcePush),
+                ))),
+        );
+    }
+
+    actions = actions.push(
+        button(text("Cancel").size(theme::FS_SM))
+            .padding(Padding::from([5, 10]))
+            .style(styles::subtle_button)
+            .on_press(Message::from(rebase::Message::Cancelled)),
+    );
+
     container(
         row![
             column![
@@ -286,40 +346,7 @@ fn toolbar(session: &InteractiveRebaseSession) -> Element<'_, Message> {
             ]
             .spacing(2)
             .width(Length::Fill),
-            button(text("Keep Mine").size(theme::FS_SM))
-                .padding(Padding::from([5, 10]))
-                .style(styles::subtle_button)
-                .on_press_maybe(pick_mine_enabled.then_some(Message::from(
-                    rebase::Message::PresetRequested(RebasePlanPreset::KeepMine,)
-                ))),
-            button(text("Squash Mine").size(theme::FS_SM))
-                .padding(Padding::from([5, 10]))
-                .style(styles::subtle_button)
-                .on_press_maybe(pick_mine_enabled.then_some(Message::from(
-                    rebase::Message::PresetRequested(RebasePlanPreset::SquashMine,)
-                ))),
-            button(text("Squash All").size(theme::FS_SM))
-                .padding(Padding::from([5, 10]))
-                .style(styles::subtle_button)
-                .on_press_maybe(preset_enabled.then_some(Message::from(
-                    rebase::Message::PresetRequested(RebasePlanPreset::SquashAll,)
-                ))),
-            button(text("Apply").size(theme::FS_SM))
-                .padding(Padding::from([5, 10]))
-                .style(styles::primary_button)
-                .on_press_maybe(apply_enabled.then_some(Message::from(
-                    rebase::Message::ApplyRequested(RebaseApplyMode::RebaseOnly,)
-                ))),
-            button(text("Apply + Push").size(theme::FS_SM))
-                .padding(Padding::from([5, 10]))
-                .style(styles::danger_button)
-                .on_press_maybe(apply_enabled.then_some(Message::from(
-                    rebase::Message::ApplyRequested(RebaseApplyMode::RebaseThenForcePush,)
-                ))),
-            button(text("Cancel").size(theme::FS_SM))
-                .padding(Padding::from([5, 10]))
-                .style(styles::subtle_button)
-                .on_press(Message::from(rebase::Message::Cancelled)),
+            actions.height(Length::Fill),
         ]
         .align_y(Alignment::Center)
         .spacing(theme::SP_MD)
