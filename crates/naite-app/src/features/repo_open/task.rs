@@ -25,15 +25,16 @@ pub(crate) async fn load(path: PathBuf) -> Result<LoadedRepo, String> {
 pub(crate) fn load_blocking(path: PathBuf) -> Result<LoadedRepo, String> {
     let repo = Repository::open(&path).map_err(|e| e.to_string())?;
     let refs = repo.refs().map_err(|e| e.to_string())?;
-    let graph_refs = branch_graph_refs(&refs);
-    let commit_page = match repo.list_commit_page_from_refs(&graph_refs, None, COMMIT_PAGE_SIZE) {
-        Ok(page) => page,
-        Err(CoreError::NoHead) => CommitPage {
-            commits: Vec::new(),
-            next_cursor: None,
-        },
-        Err(err) => return Err(err.to_string()),
-    };
+    let graph_ref_names = graph_refs(&refs);
+    let commit_page =
+        match repo.list_commit_page_from_refs(&graph_ref_names, None, COMMIT_PAGE_SIZE) {
+            Ok(page) => page,
+            Err(CoreError::NoHead) => CommitPage {
+                commits: Vec::new(),
+                next_cursor: None,
+            },
+            Err(err) => return Err(err.to_string()),
+        };
     let stashes = repo.list_stashes().map_err(|e| e.to_string())?;
     let worktrees = repo.list_worktrees().map_err(|e| e.to_string())?;
     let head_branch = repo.head_branch();
@@ -67,8 +68,8 @@ pub(crate) async fn load_more_commits(
     let result = tokio::task::spawn_blocking(move || -> Result<_, String> {
         let repo = Repository::open(&path_for_task).map_err(|e| e.to_string())?;
         let refs = repo.refs().map_err(|e| e.to_string())?;
-        let graph_refs = branch_graph_refs(&refs);
-        repo.list_commit_page_from_refs(&graph_refs, Some(cursor), COMMIT_PAGE_SIZE)
+        let graph_ref_names = graph_refs(&refs);
+        repo.list_commit_page_from_refs(&graph_ref_names, Some(cursor), COMMIT_PAGE_SIZE)
             .map_err(|e| e.to_string())
     })
     .await
@@ -95,10 +96,11 @@ pub(crate) async fn load_commit_author_avatars(
     (path, result)
 }
 
-fn branch_graph_refs(refs: &Refs) -> Vec<String> {
+fn graph_refs(refs: &Refs) -> Vec<String> {
     refs.local
         .iter()
         .chain(refs.remote.iter())
+        .chain(refs.tags.iter())
         .filter(|ref_summary| !ref_summary.target_short_id.is_empty())
         .map(|ref_summary| ref_summary.full_name.clone())
         .collect()
@@ -118,4 +120,56 @@ pub(crate) async fn init(path: PathBuf) -> Result<PathBuf, String> {
     })
     .await
     .map_err(|e| format!("worker join error: {e}"))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use naite_core::{RefKind, RefSummary};
+
+    fn ref_summary(kind: RefKind, short_name: &str, target_short_id: &str) -> RefSummary {
+        let prefix = match kind {
+            RefKind::LocalBranch => "refs/heads",
+            RefKind::RemoteBranch => "refs/remotes",
+            RefKind::Tag => "refs/tags",
+        };
+
+        RefSummary {
+            kind,
+            short_name: short_name.into(),
+            full_name: format!("{prefix}/{short_name}"),
+            target_short_id: target_short_id.into(),
+            is_head: false,
+            sync_status: None,
+        }
+    }
+
+    #[test]
+    fn graph_refs_include_local_remote_and_tag_refs() {
+        let refs = Refs {
+            local: vec![ref_summary(RefKind::LocalBranch, "main", "abc1234")],
+            remote: vec![ref_summary(RefKind::RemoteBranch, "origin/main", "abc1234")],
+            tags: vec![ref_summary(RefKind::Tag, "v1.0.0", "abc1234")],
+        };
+
+        assert_eq!(
+            graph_refs(&refs),
+            vec![
+                "refs/heads/main",
+                "refs/remotes/origin/main",
+                "refs/tags/v1.0.0"
+            ]
+        );
+    }
+
+    #[test]
+    fn graph_refs_skip_refs_without_targets() {
+        let refs = Refs {
+            local: vec![ref_summary(RefKind::LocalBranch, "main", "abc1234")],
+            remote: vec![ref_summary(RefKind::RemoteBranch, "origin/missing", "")],
+            tags: vec![ref_summary(RefKind::Tag, "dangling", "")],
+        };
+
+        assert_eq!(graph_refs(&refs), vec!["refs/heads/main"]);
+    }
 }

@@ -16,7 +16,7 @@ use crate::features::repo_open;
 use crate::state::{AvatarCache, ContextMenuKind, PreferencesState};
 use crate::styles;
 use crate::theme::{self, color};
-use crate::Message;
+use crate::{icons, Message};
 
 use crate::icons::IconName;
 
@@ -39,12 +39,12 @@ const AVATAR_HALF: f32 = AVATAR_VISUAL_SIZE / 2.0;
 /// Left pad inside the graph canvas before lane 0. Equal to AVATAR_HALF so the
 /// commit avatar's left edge sits flush with the canvas's x=0.
 pub(crate) const GRAPH_LANE_LEFT: f32 = AVATAR_HALF;
-const MAX_BRANCH_HEAD_LABELS: usize = 1;
-const MAX_BRANCH_LABEL_CHARS: usize = 16;
-const BRANCH_LABEL_SPACING: f32 = 6.0;
-const BRANCH_PILL_PAD_X: f32 = 8.0;
-const BRANCH_PILL_PAD_Y: f32 = 2.0;
-const BRANCH_PILL_RADIUS: f32 = 4.0;
+const MAX_PRIMARY_REF_LABELS: usize = 1;
+const MAX_GRAPH_REF_LABEL_CHARS: usize = 16;
+const GRAPH_REF_LABEL_SPACING: f32 = 6.0;
+const GRAPH_REF_PILL_PAD_X: f32 = 8.0;
+const GRAPH_REF_PILL_PAD_Y: f32 = 2.0;
+const GRAPH_REF_PILL_RADIUS: f32 = 4.0;
 const SHA_COLUMN_WIDTH: f32 = 96.0;
 const AUTHOR_COLUMN_WIDTH: f32 = 132.0;
 const WHEN_COLUMN_WIDTH: f32 = 86.0;
@@ -336,7 +336,7 @@ fn commit_row<'a>(props: CommitRowProps<'a>) -> Element<'a, Message> {
         parent_lanes: Vec::new(),
         total_lanes: 1,
     });
-    let branch_labels = graph_branch_head_labels(commit, refs);
+    let ref_labels = graph_ref_labels(commit, refs);
     let lane_color = color::LANES[graph_row.lane as usize % color::LANES.len()];
 
     let graph = canvas(GraphCanvas {
@@ -364,7 +364,7 @@ fn commit_row<'a>(props: CommitRowProps<'a>) -> Element<'a, Message> {
     .clip(true)
     .into();
 
-    let subject = subject_with_labels(commit, branch_labels, lane_color, selected);
+    let subject = subject_with_labels(commit, ref_labels, lane_color, selected);
 
     let author: Element<'a, Message> = if layout.show_author {
         container(
@@ -440,7 +440,8 @@ fn commit_row<'a>(props: CommitRowProps<'a>) -> Element<'a, Message> {
 }
 
 #[derive(Debug, Clone)]
-struct GraphBranchLabel {
+struct GraphRefLabel {
+    kind: RefKind,
     text: String,
     full_text: String,
     is_head: bool,
@@ -459,26 +460,34 @@ struct CommitListLayout {
     show_when: bool,
 }
 
-fn graph_branch_head_labels(commit: &CommitSummary, refs: &Refs) -> Vec<GraphBranchLabel> {
+fn graph_ref_labels(commit: &CommitSummary, refs: &Refs) -> Vec<GraphRefLabel> {
     let mut matching_refs: Vec<&RefSummary> = refs
         .local
         .iter()
         .chain(refs.remote.iter())
-        .filter(|ref_summary| is_branch_head_ref(ref_summary))
+        .chain(refs.tags.iter())
+        .filter(|ref_summary| is_graph_label_ref(ref_summary))
         .filter(|ref_summary| ref_points_to_commit(ref_summary, commit))
         .collect();
 
     matching_refs.sort_by(|a, b| {
-        branch_head_display_priority(a)
-            .cmp(&branch_head_display_priority(b))
+        graph_ref_display_priority(a)
+            .cmp(&graph_ref_display_priority(b))
             .then_with(|| a.short_name.cmp(&b.short_name))
     });
 
-    matching_refs.into_iter().map(branch_head_label).collect()
+    matching_refs.into_iter().map(graph_ref_label).collect()
 }
 
-fn branch_head_display_priority(ref_summary: &RefSummary) -> (u8, u8, u8) {
-    let lifecycle_rank = long_lived_branch_rank(ref_summary).unwrap_or(u8::MAX);
+fn graph_ref_display_priority(ref_summary: &RefSummary) -> (u8, u8, u8) {
+    let lifecycle_rank = if matches!(
+        ref_summary.kind,
+        RefKind::LocalBranch | RefKind::RemoteBranch
+    ) {
+        long_lived_branch_rank(ref_summary).unwrap_or(u8::MAX)
+    } else {
+        u8::MAX
+    };
     let kind_rank = match ref_summary.kind {
         RefKind::LocalBranch => 0,
         RefKind::RemoteBranch => 1,
@@ -510,19 +519,21 @@ fn canonical_branch_name(ref_summary: &RefSummary) -> &str {
     }
 }
 
-fn split_visible_branch_labels(labels: &[GraphBranchLabel]) -> (Vec<GraphBranchLabel>, usize) {
+fn split_visible_graph_ref_labels(labels: &[GraphRefLabel]) -> (Vec<GraphRefLabel>, usize) {
     if labels.is_empty() {
         return (Vec::new(), 0);
     }
 
-    let primary_count = labels.len().min(MAX_BRANCH_HEAD_LABELS);
-    let mut visible: Vec<GraphBranchLabel> = labels[..primary_count].to_vec();
+    let primary_count = labels.len().min(MAX_PRIMARY_REF_LABELS);
+    let mut visible: Vec<GraphRefLabel> = labels[..primary_count].to_vec();
 
     // Always expose the HEAD label so the current commit stands out, even when
     // a higher-priority long-lived branch points to the same commit.
     if !visible.iter().any(|label| label.is_head) {
         if let Some(head) = labels.iter().find(|label| label.is_head) {
-            visible.push(head.clone());
+            if !visible_contains_label(&visible, head) {
+                visible.push(head.clone());
+            }
         }
     }
 
@@ -530,31 +541,42 @@ fn split_visible_branch_labels(labels: &[GraphBranchLabel]) -> (Vec<GraphBranchL
     (visible, hidden_count)
 }
 
-fn overflow_label(hidden_count: usize) -> GraphBranchLabel {
+fn visible_contains_label(visible: &[GraphRefLabel], candidate: &GraphRefLabel) -> bool {
+    visible
+        .iter()
+        .any(|label| label.kind == candidate.kind && label.full_text == candidate.full_text)
+}
+
+fn overflow_label(hidden_count: usize) -> GraphRefLabel {
     let text = format!("+{hidden_count}");
-    GraphBranchLabel {
+    GraphRefLabel {
+        kind: RefKind::LocalBranch,
         text: text.clone(),
         full_text: text,
         is_head: false,
     }
 }
 
-fn branch_head_label(ref_summary: &RefSummary) -> GraphBranchLabel {
-    let full_text = full_branch_head_label(ref_summary);
-    let text = compact_label(&full_text, MAX_BRANCH_LABEL_CHARS);
-    GraphBranchLabel {
+fn graph_ref_label(ref_summary: &RefSummary) -> GraphRefLabel {
+    let full_text = full_graph_ref_label(ref_summary);
+    let text = compact_label(&full_text, MAX_GRAPH_REF_LABEL_CHARS);
+    GraphRefLabel {
+        kind: ref_summary.kind,
         text,
         full_text,
         is_head: ref_summary.is_head,
     }
 }
 
-fn is_branch_head_ref(ref_summary: &RefSummary) -> bool {
-    matches!(
-        ref_summary.kind,
-        RefKind::LocalBranch | RefKind::RemoteBranch
-    ) && !ref_summary.target_short_id.is_empty()
-        && !ref_summary.short_name.ends_with("/HEAD")
+fn is_graph_label_ref(ref_summary: &RefSummary) -> bool {
+    if ref_summary.target_short_id.is_empty() {
+        return false;
+    }
+
+    match ref_summary.kind {
+        RefKind::LocalBranch | RefKind::Tag => true,
+        RefKind::RemoteBranch => !ref_summary.short_name.ends_with("/HEAD"),
+    }
 }
 
 fn ref_points_to_commit(ref_summary: &RefSummary, commit: &CommitSummary) -> bool {
@@ -564,8 +586,8 @@ fn ref_points_to_commit(ref_summary: &RefSummary, commit: &CommitSummary) -> boo
     !target.is_empty() && (commit.starts_with(target) || target.starts_with(commit))
 }
 
-fn full_branch_head_label(ref_summary: &RefSummary) -> String {
-    // HEAD is conveyed visually via `branch_pill` styling instead of a "HEAD "
+fn full_graph_ref_label(ref_summary: &RefSummary) -> String {
+    // HEAD is conveyed visually via `graph_ref_pill` styling instead of a "HEAD "
     // text prefix — the filled accent pill is the "you are here" cue.
     ref_summary.short_name.clone()
 }
@@ -586,28 +608,33 @@ fn compact_label(label: &str, max_chars: usize) -> String {
     format!("{head}...{tail}")
 }
 
-fn inline_branch_pills<'a>(
-    labels: Vec<GraphBranchLabel>,
+fn inline_graph_ref_pills<'a>(
+    labels: Vec<GraphRefLabel>,
     lane_color: Color,
 ) -> Element<'a, Message> {
     if labels.is_empty() {
         return Space::with_width(Length::Fixed(0.0)).into();
     }
 
-    let (visible, hidden_count) = split_visible_branch_labels(&labels);
+    let (visible, hidden_count) = split_visible_graph_ref_labels(&labels);
 
     let mut items: Vec<Element<'a, Message>> = Vec::with_capacity((visible.len() + 1) * 2);
     for (i, label) in visible.into_iter().enumerate() {
         if i > 0 {
-            items.push(Space::with_width(Length::Fixed(BRANCH_LABEL_SPACING)).into());
+            items.push(Space::with_width(Length::Fixed(GRAPH_REF_LABEL_SPACING)).into());
         }
-        items.push(branch_pill(label, lane_color));
+        let pill = if hidden_count == 0 {
+            graph_ref_pill_with_full_text_tooltip(label, lane_color)
+        } else {
+            graph_ref_pill(label, lane_color)
+        };
+        items.push(pill);
     }
     if hidden_count > 0 {
         if !items.is_empty() {
-            items.push(Space::with_width(Length::Fixed(BRANCH_LABEL_SPACING)).into());
+            items.push(Space::with_width(Length::Fixed(GRAPH_REF_LABEL_SPACING)).into());
         }
-        items.push(branch_pill(overflow_label(hidden_count), lane_color));
+        items.push(graph_ref_pill(overflow_label(hidden_count), lane_color));
     }
 
     let pills_row: Element<'a, Message> = iced::widget::Row::with_children(items)
@@ -615,21 +642,13 @@ fn inline_branch_pills<'a>(
         .height(Length::Fixed(ROW_HEIGHT))
         .into();
 
-    let has_truncation = labels.iter().any(|label| label.text != label.full_text);
-    if hidden_count == 0 && !has_truncation {
+    if hidden_count == 0 {
         return pills_row;
     }
 
     let pills: Vec<Element<'a, Message>> = labels
         .into_iter()
-        .map(|label| {
-            let full = GraphBranchLabel {
-                text: label.full_text.clone(),
-                full_text: label.full_text,
-                is_head: label.is_head,
-            };
-            branch_pill(full, lane_color)
-        })
+        .map(|label| graph_ref_pill(full_text_graph_ref_label(label), lane_color))
         .collect();
     let tooltip_body = container(iced::widget::Column::with_children(pills).spacing(theme::SP_XS))
         .padding(Padding::from([theme::SP_XS, theme::SP_SM]))
@@ -643,9 +662,45 @@ fn inline_branch_pills<'a>(
     .into()
 }
 
+fn graph_ref_pill_with_full_text_tooltip<'a>(
+    label: GraphRefLabel,
+    lane_color: Color,
+) -> Element<'a, Message> {
+    if !graph_ref_label_needs_full_text_tooltip(&label) {
+        return graph_ref_pill(label, lane_color);
+    }
+
+    let tooltip_body = container(graph_ref_pill(
+        full_text_graph_ref_label(label.clone()),
+        lane_color,
+    ))
+    .padding(Padding::from([theme::SP_XS, theme::SP_SM]))
+    .style(styles::inset_card);
+
+    iced::widget::tooltip(
+        graph_ref_pill(label, lane_color),
+        tooltip_body,
+        iced::widget::tooltip::Position::Bottom,
+    )
+    .into()
+}
+
+fn graph_ref_label_needs_full_text_tooltip(label: &GraphRefLabel) -> bool {
+    label.kind == RefKind::Tag || label.text != label.full_text
+}
+
+fn full_text_graph_ref_label(label: GraphRefLabel) -> GraphRefLabel {
+    GraphRefLabel {
+        kind: label.kind,
+        text: label.full_text.clone(),
+        full_text: label.full_text,
+        is_head: label.is_head,
+    }
+}
+
 fn subject_with_labels<'a>(
     commit: &'a CommitSummary,
-    branch_labels: Vec<GraphBranchLabel>,
+    ref_labels: Vec<GraphRefLabel>,
     lane_color: Color,
     selected: bool,
 ) -> Element<'a, Message> {
@@ -661,11 +716,11 @@ fn subject_with_labels<'a>(
         .wrapping(Wrapping::None)
         .into();
 
-    let inner: Element<'a, Message> = if branch_labels.is_empty() {
+    let inner: Element<'a, Message> = if ref_labels.is_empty() {
         subject_text
     } else {
         iced::widget::Row::new()
-            .push(inline_branch_pills(branch_labels, lane_color))
+            .push(inline_graph_ref_pills(ref_labels, lane_color))
             .push(Space::with_width(Length::Fixed(theme::SP_SM as f32)))
             .push(subject_text)
             .align_y(Alignment::Center)
@@ -680,7 +735,7 @@ fn subject_with_labels<'a>(
         .into()
 }
 
-fn branch_pill<'a>(label: GraphBranchLabel, lane_color: Color) -> Element<'a, Message> {
+fn graph_ref_pill<'a>(label: GraphRefLabel, lane_color: Color) -> Element<'a, Message> {
     let is_head = label.is_head;
     // HEAD uses SUCCESS green (a semantic "current/active" cue) instead of
     // ACCENT, because ACCENT is also `LANES[0]` and would visually blend with
@@ -693,6 +748,13 @@ fn branch_pill<'a>(label: GraphBranchLabel, lane_color: Color) -> Element<'a, Me
             Color::WHITE,
             format!("\u{25CF} {}", label.text),
         )
+    } else if label.kind == RefKind::Tag {
+        (
+            color::SURFACE_2,
+            color::with_alpha(color::TEXT_SUBTLE, 0.45),
+            color::TEXT_MUTED,
+            label.text,
+        )
     } else {
         (
             color::with_alpha(lane_color, 0.55),
@@ -702,28 +764,39 @@ fn branch_pill<'a>(label: GraphBranchLabel, lane_color: Color) -> Element<'a, Me
         )
     };
 
-    container(
+    let content: Element<'a, Message> = if label.kind == RefKind::Tag && !is_head {
+        row![
+            icons::icon(IconName::Tag, 10, text_color),
+            text(display_text)
+                .size(theme::FS_XS)
+                .font(theme::font_semibold())
+                .color(text_color)
+                .wrapping(Wrapping::None)
+        ]
+        .align_y(Alignment::Center)
+        .spacing(theme::SP_XS)
+        .into()
+    } else {
         text(display_text)
             .size(theme::FS_XS)
             .font(theme::font_semibold())
             .color(text_color)
-            .wrapping(Wrapping::None),
-    )
-    .padding(Padding::from([
-        BRANCH_PILL_PAD_Y as u16,
-        BRANCH_PILL_PAD_X as u16,
-    ]))
-    .style(move |_| container::Style {
-        background: Some(Background::Color(background)),
-        border: Border {
-            color: border_color,
-            width: 1.0,
-            radius: BRANCH_PILL_RADIUS.into(),
-        },
-        text_color: Some(text_color),
-        ..Default::default()
-    })
-    .into()
+            .wrapping(Wrapping::None)
+            .into()
+    };
+
+    container(content)
+        .padding(Padding::from([
+            GRAPH_REF_PILL_PAD_Y as u16,
+            GRAPH_REF_PILL_PAD_X as u16,
+        ]))
+        .style(styles::graph_ref_pill(
+            background,
+            border_color,
+            text_color,
+            GRAPH_REF_PILL_RADIUS,
+        ))
+        .into()
 }
 
 fn author_avatar<'a>(
@@ -1136,11 +1209,12 @@ mod tests {
     }
 
     #[test]
-    fn current_branch_head_label_is_flagged_for_distinct_pill_styling() {
+    fn current_branch_ref_label_is_flagged_for_distinct_pill_styling() {
         let ref_summary = branch(RefKind::LocalBranch, "main", "abc1234", true);
-        let label = branch_head_label(&ref_summary);
+        let label = graph_ref_label(&ref_summary);
 
         // HEAD is conveyed via the filled accent pill style, not a text prefix.
+        assert_eq!(label.kind, RefKind::LocalBranch);
         assert_eq!(label.text, "main");
         assert_eq!(label.full_text, "main");
         assert!(label.is_head);
@@ -1158,8 +1232,8 @@ mod tests {
             tags: Vec::new(),
         };
 
-        let labels = graph_branch_head_labels(&commit, &refs);
-        let (visible, hidden) = split_visible_branch_labels(&labels);
+        let labels = graph_ref_labels(&commit, &refs);
+        let (visible, hidden) = split_visible_graph_ref_labels(&labels);
 
         let visible_names: Vec<&str> = visible.iter().map(|l| l.full_text.as_str()).collect();
         assert_eq!(visible_names, vec!["main", "feature/curitiba"]);
@@ -1170,18 +1244,98 @@ mod tests {
     }
 
     #[test]
-    fn long_branch_head_label_preserves_full_text_for_tooltip() {
+    fn graph_ref_split_keeps_tags_in_hover_overflow_with_extra_refs() {
+        let commit = commit("abc1234");
+        let refs = Refs {
+            local: vec![branch(RefKind::LocalBranch, "main", "abc1234", false)],
+            remote: vec![branch(
+                RefKind::RemoteBranch,
+                "origin/main",
+                "abc1234",
+                false,
+            )],
+            tags: vec![
+                branch(RefKind::Tag, "v1.0.0", "abc1234", false),
+                branch(RefKind::Tag, "v1.0.1", "abc1234", false),
+            ],
+        };
+
+        let labels = graph_ref_labels(&commit, &refs);
+        let (visible, hidden) = split_visible_graph_ref_labels(&labels);
+
+        assert!(visible
+            .iter()
+            .any(|label| label.kind == RefKind::LocalBranch && label.full_text == "main"));
+        assert!(!visible
+            .iter()
+            .any(|label| label.kind == RefKind::Tag && label.full_text == "v1.0.0"));
+        assert_eq!(hidden, 3);
+    }
+
+    #[test]
+    fn graph_ref_split_keeps_first_tag_visible_when_only_tags_match() {
+        let commit = commit("abc1234");
+        let refs = Refs {
+            local: Vec::new(),
+            remote: Vec::new(),
+            tags: vec![
+                branch(RefKind::Tag, "v1.0.0", "abc1234", false),
+                branch(RefKind::Tag, "v1.0.1", "abc1234", false),
+            ],
+        };
+
+        let labels = graph_ref_labels(&commit, &refs);
+        let (visible, hidden) = split_visible_graph_ref_labels(&labels);
+
+        assert_eq!(
+            visible
+                .iter()
+                .map(|label| (label.kind, label.full_text.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(RefKind::Tag, "v1.0.0")]
+        );
+        assert_eq!(hidden, 1);
+    }
+
+    #[test]
+    fn long_graph_ref_label_preserves_full_text_for_tooltip() {
         let ref_summary = branch(
             RefKind::LocalBranch,
             "feature/some-extremely-long-branch-name",
             "abc1234",
             false,
         );
-        let label = branch_head_label(&ref_summary);
+        let label = graph_ref_label(&ref_summary);
 
         assert_ne!(label.text, label.full_text);
         assert!(label.text.contains("..."));
         assert_eq!(label.full_text, "feature/some-extremely-long-branch-name");
+    }
+
+    #[test]
+    fn long_graph_ref_tag_label_preserves_full_text_for_tooltip() {
+        let ref_summary = branch(
+            RefKind::Tag,
+            "release/some-extremely-long-tag-name",
+            "abc1234",
+            false,
+        );
+        let label = graph_ref_label(&ref_summary);
+
+        assert_eq!(label.kind, RefKind::Tag);
+        assert_ne!(label.text, label.full_text);
+        assert!(label.text.contains("..."));
+        assert_eq!(label.full_text, "release/some-extremely-long-tag-name");
+        assert!(graph_ref_label_needs_full_text_tooltip(&label));
+    }
+
+    #[test]
+    fn short_graph_ref_tag_label_still_needs_full_text_tooltip() {
+        let ref_summary = branch(RefKind::Tag, "v1.0.0", "abc1234", false);
+        let label = graph_ref_label(&ref_summary);
+
+        assert_eq!(label.text, "v1.0.0");
+        assert!(graph_ref_label_needs_full_text_tooltip(&label));
     }
 
     #[test]
@@ -1217,35 +1371,41 @@ mod tests {
     }
 
     #[test]
-    fn branch_head_refs_skip_tags_and_remote_head_symbolic_refs() {
-        assert!(is_branch_head_ref(&branch(
+    fn graph_ref_label_refs_include_tags_and_skip_remote_head_symbolic_refs() {
+        assert!(is_graph_label_ref(&branch(
             RefKind::LocalBranch,
             "feature/demo",
             "abc1234",
             false
         )));
-        assert!(is_branch_head_ref(&branch(
+        assert!(is_graph_label_ref(&branch(
             RefKind::RemoteBranch,
             "origin/feature/demo",
             "abc1234",
             false
         )));
-        assert!(!is_branch_head_ref(&branch(
-            RefKind::RemoteBranch,
-            "origin/HEAD",
-            "abc1234",
-            false
-        )));
-        assert!(!is_branch_head_ref(&branch(
+        assert!(is_graph_label_ref(&branch(
             RefKind::Tag,
             "v1.0.0",
             "abc1234",
             false
         )));
+        assert!(!is_graph_label_ref(&branch(
+            RefKind::RemoteBranch,
+            "origin/HEAD",
+            "abc1234",
+            false
+        )));
+        assert!(!is_graph_label_ref(&branch(
+            RefKind::Tag,
+            "dangling",
+            "",
+            false
+        )));
     }
 
     #[test]
-    fn branch_head_labels_prioritize_long_lived_branches() {
+    fn graph_ref_labels_prioritize_long_lived_branches() {
         let commit = commit("abc1234");
         let refs = Refs {
             local: vec![
@@ -1258,7 +1418,7 @@ mod tests {
             tags: Vec::new(),
         };
 
-        let labels = graph_branch_head_labels(&commit, &refs);
+        let labels = graph_ref_labels(&commit, &refs);
 
         assert_eq!(
             labels
@@ -1270,7 +1430,7 @@ mod tests {
     }
 
     #[test]
-    fn branch_head_labels_prefer_local_long_lived_branch_over_remote_peer() {
+    fn graph_ref_labels_prefer_local_long_lived_branch_over_remote_peer() {
         let commit = commit("abc1234");
         let refs = Refs {
             local: vec![branch(RefKind::LocalBranch, "main", "abc1234", false)],
@@ -1281,7 +1441,7 @@ mod tests {
             tags: Vec::new(),
         };
 
-        let labels = graph_branch_head_labels(&commit, &refs);
+        let labels = graph_ref_labels(&commit, &refs);
 
         assert_eq!(
             labels
@@ -1293,7 +1453,41 @@ mod tests {
     }
 
     #[test]
-    fn branch_head_refs_match_variable_length_commit_abbreviations() {
+    fn graph_ref_labels_keep_branches_before_tags() {
+        let commit = commit("abc1234");
+        let refs = Refs {
+            local: vec![branch(
+                RefKind::LocalBranch,
+                "feature/demo",
+                "abc1234",
+                false,
+            )],
+            remote: vec![branch(
+                RefKind::RemoteBranch,
+                "origin/dev",
+                "abc1234",
+                false,
+            )],
+            tags: vec![branch(RefKind::Tag, "v1.0.0", "abc1234", false)],
+        };
+
+        let labels = graph_ref_labels(&commit, &refs);
+
+        assert_eq!(
+            labels
+                .iter()
+                .map(|label| (label.kind, label.full_text.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                (RefKind::RemoteBranch, "origin/dev"),
+                (RefKind::LocalBranch, "feature/demo"),
+                (RefKind::Tag, "v1.0.0")
+            ]
+        );
+    }
+
+    #[test]
+    fn graph_refs_match_variable_length_commit_abbreviations() {
         let ref_summary = branch(RefKind::LocalBranch, "main", "abc1234", true);
         let commit = commit("abc123456");
 
@@ -1301,7 +1495,7 @@ mod tests {
     }
 
     #[test]
-    fn long_branch_head_labels_are_compacted() {
+    fn long_graph_ref_labels_are_compacted() {
         let label = compact_label("feature/some-extremely-long-branch-name", 24);
 
         assert!(label.len() <= 24);
