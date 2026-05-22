@@ -17,46 +17,124 @@ Git 인증 정보나 GitHub 토큰을 직접 설정하거나 보관하지 않습
   사용할 수 있습니다. 먼저 `gh auth login`으로 로그인하고, 필요하면
   `gh auth status`로 현재 인증 상태를 확인하세요.
 
-## 나이테만의 특수 기능
+<section>
+  <h2>나이테만의 특수 기능</h2>
 
-나이테는 모든 Git GUI를 그대로 복제하려는 도구가 아닙니다. 레이어처럼
-쌓이는 히스토리를 읽고, 로컬 작업 상태를 숨기지 않으며, 위험한 Git 작업을
-실행 전에 확인할 수 있게 만드는 데 집중합니다.
+  <p>
+    나이테는 모든 Git GUI를 그대로 복제하려는 도구가 아닙니다. 레이어처럼
+    쌓이는 히스토리를 읽고, 로컬 작업 상태를 숨기지 않으며, 위험한 Git
+    작업을 실행 전에 확인할 수 있게 만드는 데 집중합니다.
+  </p>
 
-- **WIP row가 있는 레이어드 히스토리:** commit list, graph lane, refs,
-  branch sync chip, 현재 worktree 상태를 한 화면에서 함께 봅니다. 아직
-  commit하지 않은 WIP row도 commit과 같은 diff detail 화면으로 열립니다.
-- **Hunk 중심 diff 검토:** WIP와 commit diff에서 파일 선택, hunk 이동,
-  syntax highlight, unified/focused-hunk/inline/split view를 지원합니다. 파일
-  또는 텍스트 hunk 단위 stage, unstage, discard가 검토 중인 hunk 가까이에
-  배치됩니다.
-- **시각적인 히스토리 수술:** merge, rebase, conflict resolution, reword,
-  drop, squash, fixup, edit, reorder, undo, redo는 대상 commit/ref와 실행될
-  Git 명령의 형태를 prompt에서 확인한 뒤 실행합니다.
-- **Interactive rebase planner:** rebase 대상을 고르면 action chip, row
-  reorder, commit별 diff detail, reword draft, Keep Mine/Squash Mine/Squash All
-  preset이 있는 todo-list 스타일 planner가 열립니다. 계획은 로컬 rebase만
-  적용하거나 rebase 후 force push까지 이어갈 수 있습니다.
-- **Release Promotion:** `staging -> main` 같은 source/target branch 후보를
-  감지하고 remote ref를 fetch한 뒤 양쪽 branch를 remote 기준으로
-  force-sync합니다. 필요하면 안전 backup branch를 만들고 rebase planner를
-  연 다음, target update, target push, source를 target에서 다시
-  `--force-with-lease`로 sync하는 후속 action을 제공합니다.
-- **PR, issue, worktree handoff:** GitHub CLI 기반 패널에서 PR을 list, filter,
-  search, create, open, checkout할 수 있고 새 worktree로 checkout할 수도
-  있습니다. PR row는 CI, review, label, reviewer, draft, merge state,
-  linked issue metadata를 보여주며, issue row는 open/assigned/mentioned/
-  closed/search mode로 필터링할 수 있습니다.
-- **Local workspace cockpit:** 최근 저장소, 즐겨찾기, repo tab, workspace
-  dashboard로 여러 로컬 저장소를 관리합니다. dashboard는 dirty 여부,
-  ahead/behind count, worktree count, last fetch age를 요약하고 multi-repo
-  fetch/pull/open/locate/remove를 지원합니다.
-- **Repo-scoped terminal panel:** terminal session은 global shell이 아니라
-  활성 repository 또는 worktree에 붙고, 실행 상태와 shell context를 앱
-  안에서 추적합니다.
-- **Local-first provider boundary:** Git 읽기/쓰기는 `naite-core`에 있고,
-  provider 기능은 사용자의 기존 `gh` 설정을 통합니다. cloud sync,
-  telemetry, token storage, server-side source upload는 추가하지 않습니다.
+  <table>
+    <thead>
+      <tr>
+        <th>기능</th>
+        <th>차별점</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td valign="top">
+          <strong>레이어드 히스토리</strong><br>
+          <code>WIP row</code>, commit list, graph lane, refs, branch sync chip
+        </td>
+        <td valign="top">
+          현재 worktree 상태와 커밋 히스토리를 한 화면에서 함께 봅니다.
+          아직 commit하지 않은 WIP row도 commit과 같은 diff detail 화면으로
+          열립니다.
+        </td>
+      </tr>
+      <tr>
+        <td valign="top">
+          <strong>Hunk 중심 diff 검토</strong><br>
+          unified, focused-hunk, inline, split view
+        </td>
+        <td valign="top">
+          WIP와 commit diff에서 파일 선택, hunk 이동, syntax highlight를
+          지원합니다. 파일 또는 텍스트 hunk 단위 stage, unstage, discard가
+          검토 중인 hunk 가까이에 배치됩니다.
+        </td>
+      </tr>
+      <tr>
+        <td valign="top">
+          <strong>시각적인 히스토리 수술</strong><br>
+          merge, rebase, reword, drop, squash, fixup, edit, reorder, undo, redo
+        </td>
+        <td valign="top">
+          대상 commit/ref와 실행될 Git 명령의 형태를 prompt에서 확인한 뒤
+          실행합니다. conflict resolution도 현재 충돌 맥락 안에서 처리합니다.
+        </td>
+      </tr>
+      <tr>
+        <td valign="top">
+          <strong>Interactive rebase planner</strong><br>
+          action chip, row reorder, reword draft, preset
+        </td>
+        <td valign="top">
+          rebase 대상을 고르면 todo-list 스타일 planner가 열립니다. 계획은
+          로컬 rebase만 적용하거나 rebase 후 force push까지 이어갈 수
+          있습니다.
+        </td>
+      </tr>
+      <tr>
+        <td valign="top">
+          <strong>Release Promotion</strong><br>
+          source/target branch promotion
+        </td>
+        <td valign="top">
+          <code>staging -&gt; main</code> 같은 branch 후보를 감지하고 remote ref
+          fetch, 양쪽 branch force-sync, 안전 backup branch, rebase planner,
+          target push, source 재동기화를 하나의 흐름으로 묶습니다.
+        </td>
+      </tr>
+      <tr>
+        <td valign="top">
+          <strong>PR, issue, worktree handoff</strong><br>
+          GitHub CLI 기반 review flow
+        </td>
+        <td valign="top">
+          PR list/filter/search/create/open/checkout과 새 worktree checkout을
+          지원합니다. PR row는 CI, review, label, reviewer, draft, merge
+          state, linked issue metadata를 보여주고 issue row도 필터링합니다.
+        </td>
+      </tr>
+      <tr>
+        <td valign="top">
+          <strong>Local workspace cockpit</strong><br>
+          recent repo, favorite, repo tab, workspace dashboard
+        </td>
+        <td valign="top">
+          여러 로컬 저장소의 dirty 여부, ahead/behind count, worktree count,
+          last fetch age를 요약하고 multi-repo fetch, pull, open, locate,
+          remove를 지원합니다.
+        </td>
+      </tr>
+      <tr>
+        <td valign="top">
+          <strong>Repo-scoped terminal panel</strong><br>
+          repository/worktree context terminal
+        </td>
+        <td valign="top">
+          terminal session이 global shell이 아니라 활성 repository 또는
+          worktree에 붙습니다. 실행 상태와 shell context를 앱 안에서
+          추적합니다.
+        </td>
+      </tr>
+      <tr>
+        <td valign="top">
+          <strong>Local-first provider boundary</strong><br>
+          <code>naite-core</code>와 사용자의 기존 <code>gh</code> 설정
+        </td>
+        <td valign="top">
+          Git 읽기/쓰기는 core에 두고 provider 기능은 사용자의 기존 GitHub CLI
+          인증을 통합니다. cloud sync, telemetry, token storage, server-side
+          source upload는 추가하지 않습니다.
+        </td>
+      </tr>
+    </tbody>
+  </table>
+</section>
 
 ## 터미널 기능
 
