@@ -4,6 +4,19 @@
 쉽게 보여주는 네이티브 데스크톱 Git 클라이언트입니다. Rust와 iced로
 만든 로컬 우선 macOS 앱입니다.
 
+## 사용 전제
+
+현재 버전의 나이테는 사용자의 로컬 개발 환경을 그대로 사용합니다. 앱이
+Git 인증 정보나 GitHub 토큰을 직접 설정하거나 보관하지 않습니다.
+
+- private repository clone, fetch, pull, push, release promotion처럼 원격과
+  통신하는 Git 작업은 사용자의 shell 환경에서 `git` 인증이 이미 동작해야
+  합니다. 예를 들어 SSH key, credential helper, keychain, access token
+  설정이 먼저 완료되어 있어야 합니다.
+- GitHub PR/issue 기능은 GitHub CLI인 `gh`가 설치되어 있고 인증되어 있어야
+  사용할 수 있습니다. 먼저 `gh auth login`으로 로그인하고, 필요하면
+  `gh auth status`로 현재 인증 상태를 확인하세요.
+
 ## 현재 상태
 
 나이테는 읽기 전용 실험 단계를 지나, 로컬 저장소를 열거나 찾고, 최근
