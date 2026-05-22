@@ -15,7 +15,8 @@ use naite_core::{
 
 use crate::features::{
     branch_create, branch_manage, checkout, cherry_pick, discard, file_inspect, github_issue,
-    history, pull_request, rebase, repo_open, reset, revert, stage, stash, tag, terminal, worktree,
+    history, pull_request, push, rebase, repo_open, reset, revert, stage, stash, tag, terminal,
+    worktree,
 };
 use crate::state::{ContextMenuKind, ContextMenuState};
 use crate::styles;
@@ -94,6 +95,9 @@ fn build_actions<'a>(
             dirty,
             latest_stash,
         } => stash_menu_actions(*dirty, latest_stash.as_ref()),
+        ContextMenuKind::PushMenu {
+            force_with_lease_available,
+        } => push_menu_actions(*force_with_lease_available),
         ContextMenuKind::Worktree(worktree) => worktree_actions(worktree),
         ContextMenuKind::PullRequest(pull_request) => pull_request_actions(pull_request),
         ContextMenuKind::GitHubIssue(issue) => github_issue_actions(issue),
@@ -269,6 +273,25 @@ fn local_branch_folder_actions<'a>(
             Message::CopyText(label.into()),
         ),
     ]
+}
+
+fn push_menu_actions<'a>(force_with_lease_available: bool) -> Vec<Element<'a, Message>> {
+    let mut actions: Vec<Element<'a, Message>> = vec![
+        label_header("Push"),
+        menu_button(
+            "Push current branch",
+            styles::subtle_button,
+            Message::from(push::Message::Requested(push::PushMode::Normal)),
+        ),
+    ];
+    if force_with_lease_available {
+        actions.push(menu_button(
+            "Force push (with lease)",
+            styles::danger_button,
+            Message::from(push::Message::ForceWithLeaseConfirmationRequested),
+        ));
+    }
+    actions
 }
 
 fn stash_menu_actions<'a>(

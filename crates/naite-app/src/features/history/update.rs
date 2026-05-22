@@ -75,6 +75,7 @@ impl App {
             return Task::none();
         }
         self.operation.error = None;
+        self.selection.context_menu = None;
         self.selection.history_confirmation = Some(HistoryPrompt { operation });
         Task::none()
     }
@@ -90,6 +91,7 @@ impl App {
             return Task::none();
         }
         let commit_id = commit.id.clone();
+        self.selection.context_menu = None;
         self.history_reword.open = true;
         self.history_reword.loading = true;
         self.history_reword.title = commit.summary.clone();

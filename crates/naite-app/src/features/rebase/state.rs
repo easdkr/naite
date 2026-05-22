@@ -7,6 +7,7 @@ use naite_core::{HistoryCommit, RebaseAction, RefSummary};
 pub enum RebaseApplyMode {
     RebaseOnly,
     RebaseThenForcePush,
+    ReleasePromotionAuto,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

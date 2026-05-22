@@ -1,7 +1,8 @@
 //! Confirmation modals: force-checkout, branch delete, discard, and stash prompts.
 
 use iced::widget::{button, column, container, row, text, Space};
-use iced::{Alignment, Element, Length, Padding};
+use iced::widget::{button as iced_button, text::Wrapping};
+use iced::{Alignment, Element, Length, Padding, Theme};
 use naite_core::{DiffLine, WorktreeDiffKind};
 
 use crate::features::rebase::RebaseApplyMode;
@@ -133,20 +134,20 @@ pub fn force_sync_prompt<'a>(prompt: &'a ForceSyncPrompt, loading: bool) -> Elem
 
 pub fn force_push_prompt<'a>(prompt: &'a ForcePushPrompt, loading: bool) -> Element<'a, Message> {
     column![
-        text(format!("Force push {}", prompt.branch))
+        text(format!("Update remote {}", prompt.branch))
             .size(theme::FS_BASE)
             .font(theme::font_semibold())
             .color(color::TEXT),
         column![
-            text(format!("Upstream: {}", prompt.upstream))
+            text(format!("Remote branch: {}", prompt.upstream))
                 .size(theme::FS_SM)
                 .font(theme::font_regular())
                 .color(color::TEXT_MUTED),
-            text(format!("New remote tip: {}", prompt.head_short_id))
+            text(format!("New tip: {}", prompt.head_short_id))
                 .size(theme::FS_SM)
                 .font(theme::font_regular())
                 .color(color::TEXT_MUTED),
-            text("Uses git push --force-with-lease and will refuse if the remote moved.")
+            text("If the remote changed since the last fetch, naite will stop before updating it.")
                 .size(theme::FS_SM)
                 .font(theme::font_regular())
                 .color(color::TEXT_MUTED),
@@ -158,7 +159,7 @@ pub fn force_push_prompt<'a>(prompt: &'a ForcePushPrompt, loading: bool) -> Elem
                 .padding(Padding::from([5, 10]))
                 .style(styles::subtle_button)
                 .on_press(Message::from(push::Message::ForceWithLeaseCancelled)),
-            button(text("Force push").size(theme::FS_SM))
+            button(text("Update remote").size(theme::FS_SM))
                 .padding(Padding::from([5, 10]))
                 .style(styles::danger_button)
                 .on_press_maybe(
@@ -419,50 +420,80 @@ pub fn history_prompt<'a>(prompt: &'a HistoryPrompt, loading: bool) -> Element<'
 }
 
 pub fn rebase_prompt<'a>(prompt: &'a RebasePrompt, loading: bool) -> Element<'a, Message> {
-    let confirm_label = match prompt.apply_mode {
-        RebaseApplyMode::RebaseOnly => "Apply",
-        RebaseApplyMode::RebaseThenForcePush => "Apply rebase",
+    let (confirm_label, confirm_style): (
+        &str,
+        fn(&Theme, iced_button::Status) -> iced_button::Style,
+    ) = match prompt.apply_mode {
+        RebaseApplyMode::RebaseOnly => ("Apply", styles::primary_button),
+        RebaseApplyMode::RebaseThenForcePush => ("Apply rebase", styles::danger_button),
+        RebaseApplyMode::ReleasePromotionAuto => ("Auto promote", styles::danger_button),
     };
-    container(
+
+    column![
+        text(prompt.title.clone())
+            .size(theme::FS_BASE)
+            .font(theme::font_semibold())
+            .color(color::TEXT),
+        text(prompt.detail.clone())
+            .size(theme::FS_SM)
+            .font(theme::font_regular())
+            .color(color::TEXT_MUTED),
+        container(
+            text(prompt.todo_preview.clone())
+                .size(theme::FS_SM)
+                .font(theme::font_code())
+                .color(color::TEXT_MUTED)
+        )
+        .padding(Padding::from([8, 12]))
+        .width(Length::Fill)
+        .style(styles::code_preview),
         row![
-            column![
-                text(prompt.title.clone())
-                    .size(theme::FS_BASE)
-                    .font(theme::font_semibold())
-                    .color(color::TEXT),
-                text(prompt.detail.clone())
-                    .size(theme::FS_SM)
-                    .font(theme::font_regular())
-                    .color(color::TEXT_MUTED),
-                container(
-                    text(prompt.todo_preview.clone())
-                        .size(theme::FS_SM)
-                        .font(theme::font_code())
-                        .color(color::TEXT_MUTED)
-                )
-                .padding(Padding::from([4, 8]))
-                .style(styles::inset_card),
-            ]
-            .spacing(theme::SP_SM),
             Space::with_width(Length::Fill),
-            button(text("Cancel").size(theme::FS_SM))
-                .padding(Padding::from([5, 10]))
-                .style(styles::subtle_button)
-                .on_press(Message::from(rebase::Message::ApplyCancelled)),
-            button(text(confirm_label).size(theme::FS_SM))
-                .padding(Padding::from([5, 10]))
-                .style(styles::danger_button)
-                .on_press_maybe(
-                    (!loading).then_some(Message::from(rebase::Message::ApplyConfirmed))
-                ),
+            prompt_action_button(
+                "Cancel",
+                styles::subtle_button,
+                Some(Message::from(rebase::Message::ApplyCancelled)),
+            ),
+            prompt_action_button(
+                confirm_label,
+                confirm_style,
+                (!loading).then_some(Message::from(rebase::Message::ApplyConfirmed)),
+            ),
         ]
         .align_y(Alignment::Center)
-        .spacing(theme::SP_MD),
-    )
-    .padding(theme::SP_MD)
+        .spacing(theme::SP_SM),
+    ]
+    .spacing(theme::SP_MD)
     .width(Length::Fill)
-    .style(styles::warning_card)
     .into()
+}
+
+fn prompt_action_button<'a>(
+    label: &'a str,
+    style: fn(&Theme, iced_button::Status) -> iced_button::Style,
+    on_press: Option<Message>,
+) -> Element<'a, Message> {
+    button(prompt_action_label(label))
+        .padding(Padding::from([5, 10]))
+        .style(style)
+        .on_press_maybe(on_press)
+        .into()
+}
+
+fn prompt_action_label<'a>(label: &'a str) -> Element<'a, Message> {
+    container(
+        text(label)
+            .size(theme::FS_SM)
+            .font(theme::font_semibold())
+            .wrapping(Wrapping::None),
+    )
+    .center_x(Length::Fixed(prompt_action_label_width(label)))
+    .into()
+}
+
+fn prompt_action_label_width(label: &str) -> f32 {
+    let text_width = label.chars().count() as f32 * 7.0;
+    (text_width + 2.0).clamp(46.0, 92.0)
 }
 
 pub fn tag_delete_prompt<'a>(prompt: &'a TagDeletePrompt, loading: bool) -> Element<'a, Message> {

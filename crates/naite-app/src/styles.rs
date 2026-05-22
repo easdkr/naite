@@ -99,6 +99,21 @@ pub fn inset_card(_: &Theme) -> container::Style {
     }
 }
 
+/// Inset code/command preview that should read as a depressed block against
+/// a SURFACE_2 modal or panel. Uses BG so command previews feel terminal-like
+/// rather than blending into the surrounding card.
+pub fn code_preview(_: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(color::BG)),
+        border: Border {
+            color: color::BORDER,
+            width: 1.0,
+            radius: theme::R_MD.into(),
+        },
+        ..Default::default()
+    }
+}
+
 /// Danger-tinted card used for error messages.
 pub fn error_card(_: &Theme) -> container::Style {
     container::Style {
@@ -382,15 +397,24 @@ pub fn primary_button(_: &Theme, status: button::Status) -> button::Style {
     let bg = match status {
         button::Status::Hovered => color::with_alpha(color::ACCENT, 0.92),
         button::Status::Pressed => color::with_alpha(color::ACCENT, 0.80),
-        button::Status::Disabled => color::with_alpha(color::ACCENT, 0.45),
+        button::Status::Disabled => color::with_alpha(color::SURFACE_2, 0.72),
         _ => color::ACCENT,
+    };
+    let (text_color, border_color, border_width) = if matches!(status, button::Status::Disabled) {
+        (
+            color::TEXT_MUTED,
+            color::with_alpha(color::BORDER, 0.85),
+            1.0,
+        )
+    } else {
+        (Color::WHITE, Color::TRANSPARENT, 0.0)
     };
     button::Style {
         background: Some(Background::Color(bg)),
-        text_color: Color::WHITE,
+        text_color,
         border: Border {
-            color: Color::TRANSPARENT,
-            width: 0.0,
+            color: border_color,
+            width: border_width,
             radius: theme::R_MD.into(),
         },
         ..Default::default()
@@ -662,20 +686,24 @@ pub fn danger_button(_: &Theme, status: button::Status) -> button::Style {
     let bg = match status {
         button::Status::Hovered => color::with_alpha(color::DANGER, 0.92),
         button::Status::Pressed => color::with_alpha(color::DANGER, 0.78),
-        button::Status::Disabled => color::with_alpha(color::DANGER, 0.24),
+        button::Status::Disabled => color::with_alpha(color::SURFACE_2, 0.72),
         _ => color::DANGER,
     };
-    let text_color = if matches!(status, button::Status::Disabled) {
-        color::TEXT_SUBTLE
+    let (text_color, border_color, border_width) = if matches!(status, button::Status::Disabled) {
+        (
+            color::TEXT_MUTED,
+            color::with_alpha(color::DANGER, 0.35),
+            1.0,
+        )
     } else {
-        Color::WHITE
+        (Color::WHITE, Color::TRANSPARENT, 0.0)
     };
     button::Style {
         background: Some(Background::Color(bg)),
         text_color,
         border: Border {
-            color: Color::TRANSPARENT,
-            width: 0.0,
+            color: border_color,
+            width: border_width,
             radius: theme::R_MD.into(),
         },
         ..Default::default()

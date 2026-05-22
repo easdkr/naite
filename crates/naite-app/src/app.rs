@@ -592,6 +592,19 @@ impl App {
         let merge_in_progress = self.repo.operation_state.merge_in_progress;
         let rebase_in_progress = self.repo.operation_state.rebase_in_progress;
         let release_profile_active = self.release_prep.active_profile.is_some();
+        let release_auto_running = self.release_prep.auto_running;
+        let release_update_target_complete = self
+            .release_prep
+            .completed_actions
+            .contains(&crate::features::release_prep::ReleasePrepAction::UpdateTargetFromSource);
+        let release_push_target_complete = self
+            .release_prep
+            .completed_actions
+            .contains(&crate::features::release_prep::ReleasePrepAction::PushTarget);
+        let release_sync_source_complete = self
+            .release_prep
+            .completed_actions
+            .contains(&crate::features::release_prep::ReleasePrepAction::SyncSourceFromTarget);
 
         vec![
             CommandPaletteItem {
@@ -1243,6 +1256,8 @@ impl App {
                 shortcut: "Cmd Shift R",
                 disabled_reason: if self.operation.loading {
                     Some("Operation in progress")
+                } else if release_auto_running {
+                    Some("Auto promotion in progress")
                 } else if !has_repo {
                     Some("Open a repository first")
                 } else if self.repo.status_detail.is_dirty() {
@@ -1258,6 +1273,10 @@ impl App {
                 shortcut: "",
                 disabled_reason: if self.operation.loading {
                     Some("Operation in progress")
+                } else if release_auto_running {
+                    Some("Auto promotion in progress")
+                } else if release_update_target_complete {
+                    Some("Release step already complete")
                 } else if !release_profile_active {
                     Some("Plan a release promotion first")
                 } else if self.repo.status_detail.is_dirty() {
@@ -1273,6 +1292,10 @@ impl App {
                 shortcut: "",
                 disabled_reason: if self.operation.loading {
                     Some("Operation in progress")
+                } else if release_auto_running {
+                    Some("Auto promotion in progress")
+                } else if release_push_target_complete {
+                    Some("Release step already complete")
                 } else if !release_profile_active {
                     Some("Plan a release promotion first")
                 } else {
@@ -1281,12 +1304,16 @@ impl App {
             },
             CommandPaletteItem {
                 id: CommandId::ReleaseSyncSourceFromTarget,
-                label: "Sync release source from target",
+                label: "Rebase release source onto target",
                 description:
-                    "Reset the release source branch to target and push with --force-with-lease",
+                    "Rebase the release source branch onto target and push with --force-with-lease",
                 shortcut: "",
                 disabled_reason: if self.operation.loading {
                     Some("Operation in progress")
+                } else if release_auto_running {
+                    Some("Auto promotion in progress")
+                } else if release_sync_source_complete {
+                    Some("Release step already complete")
                 } else if !release_profile_active {
                     Some("Plan a release promotion first")
                 } else if self.repo.status_detail.is_dirty() {

@@ -6,8 +6,12 @@ use crate::{features::repo_open, App, Message};
 impl App {
     pub(crate) fn update_push(&mut self, message: PushMessage) -> Task<Message> {
         match message {
-            PushMessage::Requested(mode) => self.start_push(mode),
+            PushMessage::Requested(mode) => {
+                self.selection.context_menu = None;
+                self.start_push(mode)
+            }
             PushMessage::ForceWithLeaseConfirmationRequested => {
+                self.selection.context_menu = None;
                 match self.force_push_prompt_for_current_branch() {
                     Ok(prompt) => {
                         self.selection.force_push_confirmation = Some(prompt);

@@ -172,8 +172,12 @@ impl Repository {
         if self.status()?.is_dirty() {
             return Err(Error::DirtyWorkdir);
         }
+        let remote = validate_ref_component(&profile.remote)?;
+        let remote_source = format!("{remote}/{}", profile.source_branch);
+        let _ = self.git(&["fetch", remote])?;
         let _ = self.git(&["checkout", &profile.source_branch])?;
-        let _ = self.git(&["reset", "--hard", &profile.target_branch])?;
+        let _ = self.git(&["reset", "--hard", &remote_source])?;
+        let _ = self.git(&["rebase", &profile.target_branch])?;
         let _ = self.git(&[
             "push",
             "--force-with-lease",
@@ -513,7 +517,7 @@ mod tests {
     }
 
     #[test]
-    fn release_source_sync_uses_force_with_lease() {
+    fn release_source_sync_rebases_remote_source_onto_target_before_force_push() {
         let remote = TempRepo::new("release-force-remote");
         remote.git(&["init", "--bare"]);
 
@@ -524,7 +528,11 @@ mod tests {
         source.git(&["checkout", "-b", "staging"]);
         source.write("staging.txt", "staging\n");
         source.git(&["add", "staging.txt"]);
-        source.git(&["commit", "-m", "staging"]);
+        source.git(&["commit", "-m", "release-ready"]);
+        let release_ready = source.git_output(&["rev-parse", "HEAD"]);
+        source.write("pending.txt", "pending\n");
+        source.git(&["add", "pending.txt"]);
+        source.git(&["commit", "-m", "pending"]);
         source.git(&["push", "-u", "origin", "staging"]);
 
         let repo = Repository::open(&source.path).unwrap();
@@ -534,6 +542,9 @@ mod tests {
             target_branch: "main".into(),
         };
 
+        // Simulate the release review dropping the pending commit locally before
+        // updating and pushing the target branch.
+        source.git(&["reset", "--hard", release_ready.trim()]);
         source.git(&["checkout", "main"]);
         source.git(&["merge", "--ff-only", "staging"]);
         source.git(&["push", "origin", "main"]);
@@ -541,6 +552,14 @@ mod tests {
 
         let staging = remote.git_output(&["rev-parse", "refs/heads/staging"]);
         let main = remote.git_output(&["rev-parse", "refs/heads/main"]);
-        assert_eq!(staging.trim(), main.trim());
+        assert_ne!(staging.trim(), main.trim());
+        let pending_parent = remote.git_output(&["rev-parse", "refs/heads/staging^"]);
+        assert_eq!(pending_parent.trim(), main.trim());
+        assert_eq!(
+            remote
+                .git_output(&["log", "-1", "--format=%s", "refs/heads/staging"])
+                .trim(),
+            "pending"
+        );
     }
 }

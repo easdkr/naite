@@ -13,6 +13,7 @@ pub enum Message {
     Cancelled,
     ProfileSubmitted,
     Prepared(Box<Result<PrepareOutcome, String>>),
+    AutoRequested,
     ActionRequested(ReleasePrepAction),
     ActionDone {
         action: ReleasePrepAction,
@@ -32,7 +33,7 @@ impl ReleasePrepAction {
         match self {
             Self::UpdateTargetFromSource => "Update target from source",
             Self::PushTarget => "Push target",
-            Self::SyncSourceFromTarget => "Sync source from target",
+            Self::SyncSourceFromTarget => "Rebase source onto target",
         }
     }
 }

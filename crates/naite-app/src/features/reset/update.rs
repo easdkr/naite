@@ -27,6 +27,7 @@ impl App {
             return Task::none();
         }
         self.operation.error = None;
+        self.selection.context_menu = None;
         self.selection.reset_confirmation = Some(ResetPrompt { target: commit });
         Task::none()
     }

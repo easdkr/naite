@@ -2454,6 +2454,269 @@ fn apply_then_force_push_sets_pending_prompt_after_successful_rebase() {
 }
 
 #[test]
+fn release_promotion_rebase_rejects_apply_then_force_push() {
+    let path = PathBuf::from("/tmp/naite");
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(path),
+            head_branch: Some("staging".into()),
+            sync_status: BranchSyncStatus {
+                upstream: Some("origin/staging".into()),
+                ahead: 1,
+                behind: 0,
+            },
+            commits: vec![commit("abcdef123", "head", "june")],
+            ..Default::default()
+        },
+        release_prep: ReleasePrepState {
+            active_profile: Some(ReleaseProfile {
+                remote: "origin".into(),
+                source_branch: "staging".into(),
+                target_branch: "main".into(),
+            }),
+            ..Default::default()
+        },
+        rebase: Some(rebase::InteractiveRebaseSession {
+            current_branch: local_branch("staging", true),
+            target: local_branch("main", false),
+            current_author_email: Some("june@example.com".into()),
+            plan: vec![rebase_row("a111111", "first commit")],
+            selected: 0,
+            drag: None,
+            reword_drafts: HashMap::new(),
+            applying: false,
+            scroll_offset: 0.0,
+        }),
+        ..Default::default()
+    };
+
+    let _ = app.update(Message::from(rebase::Message::ApplyRequested(
+        rebase::RebaseApplyMode::RebaseThenForcePush,
+    )));
+
+    assert!(app.selection.rebase_confirmation.is_none());
+    assert_eq!(
+        app.operation.error.as_deref(),
+        Some("release promotion applies the rebase locally; push the target, then sync the source")
+    );
+}
+
+#[test]
+fn release_promotion_auto_rebase_sets_pending_pipeline() {
+    let path = PathBuf::from("/tmp/naite");
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(path),
+            head_branch: Some("staging".into()),
+            sync_status: BranchSyncStatus {
+                upstream: Some("origin/staging".into()),
+                ahead: 1,
+                behind: 0,
+            },
+            commits: vec![commit("abcdef123", "head", "june")],
+            ..Default::default()
+        },
+        release_prep: ReleasePrepState {
+            active_profile: Some(ReleaseProfile {
+                remote: "origin".into(),
+                source_branch: "staging".into(),
+                target_branch: "main".into(),
+            }),
+            ..Default::default()
+        },
+        rebase: Some(rebase::InteractiveRebaseSession {
+            current_branch: local_branch("staging", true),
+            target: local_branch("main", false),
+            current_author_email: Some("june@example.com".into()),
+            plan: vec![rebase_row("a111111", "first commit")],
+            selected: 0,
+            drag: None,
+            reword_drafts: HashMap::new(),
+            applying: true,
+            scroll_offset: 0.0,
+        }),
+        operation: OperationState {
+            loading: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let _ = app.update(Message::from(rebase::Message::Done {
+        result: Ok(rebase::task::ApplyOutcome::Applied),
+        apply_mode: rebase::RebaseApplyMode::ReleasePromotionAuto,
+    }));
+
+    assert!(app.release_prep.auto_running);
+    assert_eq!(
+        app.release_prep.auto_next_action,
+        Some(release_prep::ReleasePrepAction::UpdateTargetFromSource)
+    );
+    assert_eq!(
+        app.operation
+            .pending_transient_status_after_reload
+            .as_deref(),
+        Some("Interactive rebase applied; starting auto promotion")
+    );
+}
+
+#[test]
+fn release_promotion_auto_continues_after_repo_reload() {
+    let path = PathBuf::from("/tmp/naite");
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(path.clone()),
+            ..Default::default()
+        },
+        operation: OperationState {
+            pending_transient_status_after_reload: Some(
+                "Interactive rebase applied; starting auto promotion".into(),
+            ),
+            ..Default::default()
+        },
+        release_prep: ReleasePrepState {
+            active_profile: Some(ReleaseProfile {
+                remote: "origin".into(),
+                source_branch: "staging".into(),
+                target_branch: "main".into(),
+            }),
+            auto_running: true,
+            auto_next_action: Some(release_prep::ReleasePrepAction::UpdateTargetFromSource),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let _ = app.update(Message::from(repo_open::Message::Loaded(Box::new(Ok((
+        path,
+        vec![commit("abcdef123", "head", "june")],
+        None,
+        Refs::default(),
+        Vec::new(),
+        Vec::new(),
+        Some("staging".into()),
+        WorktreeStatusDetail::default(),
+        BranchSyncStatus {
+            upstream: Some("origin/staging".into()),
+            ahead: 1,
+            behind: 0,
+        },
+        GitOperationState::default(),
+    ))))));
+
+    assert!(app.release_prep.auto_running);
+    assert_eq!(app.release_prep.auto_next_action, None);
+    assert_eq!(app.release_prep.phase, ReleasePrepPhase::RunningAction);
+    assert!(app.operation.loading);
+}
+
+#[test]
+fn release_promotion_auto_mode_ignores_manual_controls() {
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(PathBuf::from("/tmp/naite")),
+            ..Default::default()
+        },
+        release_prep: ReleasePrepState {
+            active_profile: Some(ReleaseProfile {
+                remote: "origin".into(),
+                source_branch: "staging".into(),
+                target_branch: "main".into(),
+            }),
+            phase: ReleasePrepPhase::Actions,
+            auto_running: true,
+            auto_next_action: Some(release_prep::ReleasePrepAction::PushTarget),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let _ = app.update(Message::from(release_prep::Message::ActionRequested(
+        release_prep::ReleasePrepAction::UpdateTargetFromSource,
+    )));
+
+    assert!(app.release_prep.auto_running);
+    assert_eq!(
+        app.release_prep.auto_next_action,
+        Some(release_prep::ReleasePrepAction::PushTarget)
+    );
+    assert_eq!(app.release_prep.phase, ReleasePrepPhase::Actions);
+    assert!(!app.operation.loading);
+
+    let _ = app.update(Message::from(release_prep::Message::Cancelled));
+    assert_eq!(app.release_prep.phase, ReleasePrepPhase::Actions);
+    assert!(app.release_prep.auto_running);
+
+    let _ = app.update(Message::Keyboard(KeyAction::Escape));
+    assert_eq!(app.release_prep.phase, ReleasePrepPhase::Actions);
+    assert!(app.release_prep.auto_running);
+
+    let release_command = app
+        .command_palette_items()
+        .into_iter()
+        .find(|item| item.id == CommandId::ReleasePushTarget)
+        .unwrap();
+    assert_eq!(
+        release_command.disabled_reason,
+        Some("Auto promotion in progress")
+    );
+}
+
+#[test]
+fn release_promotion_completed_steps_cannot_run_again() {
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(PathBuf::from("/tmp/naite")),
+            ..Default::default()
+        },
+        release_prep: ReleasePrepState {
+            active_profile: Some(ReleaseProfile {
+                remote: "origin".into(),
+                source_branch: "staging".into(),
+                target_branch: "main".into(),
+            }),
+            completed_actions: vec![
+                release_prep::ReleasePrepAction::UpdateTargetFromSource,
+                release_prep::ReleasePrepAction::PushTarget,
+                release_prep::ReleasePrepAction::SyncSourceFromTarget,
+            ],
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let _ = app.update(Message::from(release_prep::Message::ActionRequested(
+        release_prep::ReleasePrepAction::PushTarget,
+    )));
+
+    assert!(!app.operation.loading);
+    assert!(!app.release_prep.auto_running);
+
+    let _ = app.update(Message::from(release_prep::Message::AutoRequested));
+
+    assert!(!app.operation.loading);
+    assert!(!app.release_prep.auto_running);
+    assert_eq!(app.release_prep.auto_next_action, None);
+    assert_eq!(
+        app.operation
+            .transient_status
+            .as_ref()
+            .map(|status| status.message.as_str()),
+        Some("Auto promotion already complete")
+    );
+
+    let release_command = app
+        .command_palette_items()
+        .into_iter()
+        .find(|item| item.id == CommandId::ReleasePushTarget)
+        .unwrap();
+    assert_eq!(
+        release_command.disabled_reason,
+        Some("Release step already complete")
+    );
+}
+
+#[test]
 fn force_push_prompt_opens_after_pending_rebase_reload() {
     let path = PathBuf::from("/tmp/naite");
     let mut app = App {
@@ -3830,6 +4093,75 @@ fn enabled_force_push_command_opens_confirmation_without_starting_push() {
     )));
 
     assert!(!app.command_palette.open);
+    assert!(!app.operation.loading);
+    let prompt = app
+        .selection
+        .force_push_confirmation
+        .as_ref()
+        .expect("force push should require confirmation");
+    assert_eq!(prompt.branch, "main");
+    assert_eq!(prompt.upstream, "origin/main");
+}
+
+#[test]
+fn push_menu_normal_push_closes_context_menu() {
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(PathBuf::from("/tmp/naite")),
+            head_branch: Some("main".into()),
+            ..Default::default()
+        },
+        selection: SelectionState {
+            context_menu: Some(crate::state::ContextMenuState {
+                kind: crate::state::ContextMenuKind::PushMenu {
+                    force_with_lease_available: false,
+                },
+                position: iced::Point::new(24.0, 24.0),
+            }),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let _ = app.update(Message::from(push::Message::Requested(
+        push::PushMode::Normal,
+    )));
+
+    assert!(app.selection.context_menu.is_none());
+    assert!(app.operation.loading);
+}
+
+#[test]
+fn push_menu_force_push_opens_confirmation_and_closes_context_menu() {
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(PathBuf::from("/tmp/naite")),
+            head_branch: Some("main".into()),
+            sync_status: BranchSyncStatus {
+                upstream: Some("origin/main".into()),
+                ahead: 1,
+                behind: 0,
+            },
+            commits: vec![commit("abcdef123", "head", "june")],
+            ..Default::default()
+        },
+        selection: SelectionState {
+            context_menu: Some(crate::state::ContextMenuState {
+                kind: crate::state::ContextMenuKind::PushMenu {
+                    force_with_lease_available: true,
+                },
+                position: iced::Point::new(24.0, 24.0),
+            }),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let _ = app.update(Message::from(
+        push::Message::ForceWithLeaseConfirmationRequested,
+    ));
+
+    assert!(app.selection.context_menu.is_none());
     assert!(!app.operation.loading);
     let prompt = app
         .selection

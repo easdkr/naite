@@ -1,6 +1,7 @@
 //! Confirmation prompt for `git reset` with mode selection (soft/mixed/hard).
 
-use iced::widget::{button, column, container, row, text, Space};
+use iced::widget::text::Wrapping;
+use iced::widget::{button, column, row, text, Space};
 use iced::{Alignment, Element, Length, Padding};
 use naite_core::ResetMode;
 
@@ -16,62 +17,72 @@ pub fn reset_prompt<'a>(prompt: &'a ResetPrompt, loading: bool) -> Element<'a, M
         prompt.target.short_id
     );
 
-    container(
+    column![
+        text(title)
+            .size(theme::FS_BASE)
+            .font(theme::font_semibold())
+            .color(color::TEXT),
         column![
-            row![
-                column![
-                    text(title)
-                        .size(theme::FS_BASE)
-                        .font(theme::font_semibold())
-                        .color(color::TEXT),
-                    text(detail)
-                        .size(theme::FS_SM)
-                        .font(theme::font_regular())
-                        .color(color::TEXT_MUTED),
-                    text(format!("Subject: {}", prompt.target.summary))
-                        .size(theme::FS_SM)
-                        .font(theme::font_regular())
-                        .color(color::TEXT_MUTED),
-                ]
-                .spacing(2),
-                Space::with_width(Length::Fill),
-                button(text("Cancel").size(theme::FS_SM))
-                    .padding(Padding::from([5, 10]))
-                    .style(styles::subtle_button)
-                    .on_press(Message::from(reset::Message::Cancelled)),
-            ]
-            .align_y(Alignment::Center)
-            .spacing(theme::SP_MD),
-            row![
-                button(text("Soft (keep changes staged)").size(theme::FS_SM))
-                    .padding(Padding::from([5, 10]))
-                    .style(styles::subtle_button)
-                    .on_press_maybe(
-                        (!loading)
-                            .then_some(Message::from(reset::Message::Confirmed(ResetMode::Soft)))
-                    ),
-                button(text("Mixed (keep changes unstaged)").size(theme::FS_SM))
-                    .padding(Padding::from([5, 10]))
-                    .style(styles::subtle_button)
-                    .on_press_maybe(
-                        (!loading)
-                            .then_some(Message::from(reset::Message::Confirmed(ResetMode::Mixed)))
-                    ),
-                button(text("Hard (discard changes)").size(theme::FS_SM))
-                    .padding(Padding::from([5, 10]))
-                    .style(styles::danger_button)
-                    .on_press_maybe(
-                        (!loading)
-                            .then_some(Message::from(reset::Message::Confirmed(ResetMode::Hard)))
-                    ),
-            ]
-            .align_y(Alignment::Center)
-            .spacing(theme::SP_SM),
+            text(detail)
+                .size(theme::FS_SM)
+                .font(theme::font_regular())
+                .color(color::TEXT_MUTED),
+            text(format!("Subject: {}", prompt.target.summary))
+                .size(theme::FS_SM)
+                .font(theme::font_regular())
+                .color(color::TEXT_MUTED),
         ]
-        .spacing(theme::SP_MD),
-    )
-    .padding(theme::SP_MD)
+        .spacing(2),
+        column![
+            mode_hint("Soft", "keep changes staged"),
+            mode_hint("Mixed", "keep changes unstaged"),
+            mode_hint("Hard", "discard changes"),
+        ]
+        .spacing(2),
+        row![
+            Space::with_width(Length::Fill),
+            button(text("Cancel").size(theme::FS_SM).wrapping(Wrapping::None))
+                .padding(Padding::from([5, 10]))
+                .style(styles::subtle_button)
+                .on_press(Message::from(reset::Message::Cancelled)),
+            button(text("Soft").size(theme::FS_SM).wrapping(Wrapping::None))
+                .padding(Padding::from([5, 10]))
+                .style(styles::subtle_button)
+                .on_press_maybe(
+                    (!loading).then_some(Message::from(reset::Message::Confirmed(ResetMode::Soft)))
+                ),
+            button(text("Mixed").size(theme::FS_SM).wrapping(Wrapping::None))
+                .padding(Padding::from([5, 10]))
+                .style(styles::subtle_button)
+                .on_press_maybe(
+                    (!loading)
+                        .then_some(Message::from(reset::Message::Confirmed(ResetMode::Mixed)))
+                ),
+            button(text("Hard").size(theme::FS_SM).wrapping(Wrapping::None))
+                .padding(Padding::from([5, 10]))
+                .style(styles::danger_button)
+                .on_press_maybe(
+                    (!loading).then_some(Message::from(reset::Message::Confirmed(ResetMode::Hard)))
+                ),
+        ]
+        .align_y(Alignment::Center)
+        .spacing(theme::SP_SM),
+    ]
+    .spacing(theme::SP_MD)
     .width(Length::Fill)
-    .style(styles::warning_card)
+    .into()
+}
+
+fn mode_hint<'a>(name: &'a str, description: &'a str) -> Element<'a, Message> {
+    row![
+        text(name)
+            .size(theme::FS_SM)
+            .font(theme::font_semibold())
+            .color(color::TEXT),
+        text(format!(" — {description}"))
+            .size(theme::FS_SM)
+            .font(theme::font_regular())
+            .color(color::TEXT_MUTED),
+    ]
     .into()
 }
