@@ -41,18 +41,22 @@ fn modal_with_progress<'a>(
     .on_press(on_dismiss)
     .into();
 
-    let card: Element<'a, Message> = container(
+    let card_surface: Element<'a, Message> = mouse_area(
         container(content)
             .width(Length::Fill)
             .max_width(MODAL_MAX_WIDTH)
             .padding(Padding::from(theme::SP_LG))
             .style(move |_| card_progress_style(progress)),
     )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .center_x(Length::Fill)
-    .center_y(Length::Fill)
+    .on_press(Message::NoOp)
     .into();
+
+    let card: Element<'a, Message> = container(card_surface)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .center_x(Length::Fill)
+        .center_y(Length::Fill)
+        .into();
 
     stack![backdrop, card].into()
 }

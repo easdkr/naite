@@ -71,6 +71,7 @@ pub fn shortcut_help_overlay() -> Element<'static, Message> {
         ("Cmd/Ctrl `", "Open terminal"),
         ("Cmd/Ctrl F", "Search commits"),
         ("Cmd/Ctrl Shift R", "Release promotion"),
+        ("Cmd/Ctrl Shift T", "Create and push tag"),
         ("J / K", "Next / previous commit"),
         ("[ / ]", "Previous / next hunk"),
         ("Enter", "Run command or open single search result"),

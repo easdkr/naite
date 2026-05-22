@@ -5,6 +5,7 @@ use crate::state::TagNameMode;
 #[derive(Debug, Clone)]
 pub enum Message {
     CreateRequested(Option<CommitSummary>),
+    CreateAndPushRequested(Option<CommitSummary>),
     CreateNameChanged(String),
     CreateNameModeChanged(TagNameMode),
     CreatePushAfterChanged(bool),

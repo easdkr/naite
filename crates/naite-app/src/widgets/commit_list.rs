@@ -27,18 +27,18 @@ use super::common::{
 use super::ROW_HEIGHT;
 
 const GRAPH_MIN_WIDTH: f32 = 26.0;
-const GRAPH_LANE_GAP: f32 = 22.0;
+pub(crate) const GRAPH_LANE_GAP: f32 = 22.0;
 const GRAPH_MIN_LANE_GAP: f32 = 12.0;
 const GRAPH_LANE_SPAN_MAX: f32 = 220.0;
-const GRAPH_STROKE_WIDTH: f32 = 2.0;
-const GRAPH_CORNER_RADIUS: f32 = 4.0;
+pub(crate) const GRAPH_STROKE_WIDTH: f32 = 2.0;
+pub(crate) const GRAPH_CORNER_RADIUS: f32 = 4.0;
 const COMMIT_AVATAR_SIZE: f32 = 18.0;
 const AVATAR_BORDER_WIDTH: f32 = 2.0;
 const AVATAR_VISUAL_SIZE: f32 = COMMIT_AVATAR_SIZE + 2.0 * AVATAR_BORDER_WIDTH;
 const AVATAR_HALF: f32 = AVATAR_VISUAL_SIZE / 2.0;
 /// Left pad inside the graph canvas before lane 0. Equal to AVATAR_HALF so the
 /// commit avatar's left edge sits flush with the canvas's x=0.
-const GRAPH_LANE_LEFT: f32 = AVATAR_HALF;
+pub(crate) const GRAPH_LANE_LEFT: f32 = AVATAR_HALF;
 const MAX_BRANCH_HEAD_LABELS: usize = 1;
 const MAX_BRANCH_LABEL_CHARS: usize = 16;
 const BRANCH_LABEL_SPACING: f32 = 6.0;
@@ -906,29 +906,29 @@ struct GraphCanvas {
     lane_gap: f32,
 }
 
-fn snap(value: f32) -> f32 {
+pub(crate) fn snap(value: f32) -> f32 {
     value.round()
 }
 
-fn lane_x(lane: u8, lane_gap: f32) -> f32 {
+pub(crate) fn lane_x(lane: u8, lane_gap: f32) -> f32 {
     snap(GRAPH_LANE_LEFT + lane as f32 * lane_gap)
 }
 
-fn row_y(value: f32, height: f32) -> f32 {
+pub(crate) fn row_y(value: f32, height: f32) -> f32 {
     snap(value.clamp(0.0, height))
 }
 
-fn graph_fill(color: Color) -> Color {
+pub(crate) fn graph_fill(color: Color) -> Color {
     color::with_alpha(color, 0.90)
 }
 
-fn graph_stroke(color: Color) -> canvas::Stroke<'static> {
+pub(crate) fn graph_stroke(color: Color) -> canvas::Stroke<'static> {
     canvas::Stroke::default()
         .with_color(graph_fill(color))
         .with_width(GRAPH_STROKE_WIDTH)
 }
 
-fn fill_vertical_segment(
+pub(crate) fn fill_vertical_segment(
     frame: &mut canvas::Frame,
     x: f32,
     y_start: f32,
@@ -949,7 +949,7 @@ fn fill_vertical_segment(
     );
 }
 
-fn fill_horizontal_segment(
+pub(crate) fn fill_horizontal_segment(
     frame: &mut canvas::Frame,
     x_start: f32,
     x_end: f32,

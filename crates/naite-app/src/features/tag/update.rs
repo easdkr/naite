@@ -13,6 +13,9 @@ impl App {
     pub(crate) fn update_tag(&mut self, message: TagMessage) -> Task<Message> {
         match message {
             TagMessage::CreateRequested(target_commit) => self.open_tag_create_form(target_commit),
+            TagMessage::CreateAndPushRequested(target_commit) => {
+                self.open_tag_create_form_with_options(target_commit, true)
+            }
             TagMessage::CreateNameChanged(name) => {
                 self.tag_create.name = name;
                 Task::none()
@@ -76,16 +79,25 @@ impl App {
         &mut self,
         target_commit: Option<CommitSummary>,
     ) -> Task<Message> {
+        self.open_tag_create_form_with_options(target_commit, false)
+    }
+
+    pub(crate) fn open_tag_create_form_with_options(
+        &mut self,
+        target_commit: Option<CommitSummary>,
+        push_after_create: bool,
+    ) -> Task<Message> {
         if self.repo.path.is_none() || self.operation.loading {
             return Task::none();
         }
         let name_mode = TagNameMode::default();
+        self.selection.context_menu = None;
         self.tag_create = TagCreateState {
             open: true,
             target_commit,
             name: self.suggest_unique_tag_name(name_mode),
             name_mode,
-            push_after_create: false,
+            push_after_create,
         };
         text_input::focus(self.tag_create_input_id.clone())
     }
@@ -94,6 +106,7 @@ impl App {
         if self.repo.path.is_none() || self.operation.loading || target.kind != RefKind::Tag {
             return Task::none();
         }
+        self.selection.context_menu = None;
         self.selection.tag_delete_confirmation = Some(TagDeletePrompt { target });
         Task::none()
     }

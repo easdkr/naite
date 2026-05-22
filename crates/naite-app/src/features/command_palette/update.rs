@@ -409,6 +409,9 @@ impl App {
             CommandId::CreateTag => {
                 self.update(tag::Message::CreateRequested(self.selected_commit()).into())
             }
+            CommandId::CreateAndPushTag => {
+                self.update(tag::Message::CreateAndPushRequested(self.selected_commit()).into())
+            }
             CommandId::DeleteSelectedTag => self
                 .selected_context_tag()
                 .cloned()

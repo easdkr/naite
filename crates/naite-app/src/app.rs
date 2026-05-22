@@ -294,6 +294,7 @@ pub enum CommandId {
     ResetToSelectedCommit,
     CreateBranchFromSelectedCommit,
     CreateTag,
+    CreateAndPushTag,
     DeleteSelectedTag,
     Undo,
     Redo,
@@ -1563,6 +1564,19 @@ impl App {
                 label: "Create tag",
                 description: "Create a lightweight tag on the selected commit or HEAD",
                 shortcut: "",
+                disabled_reason: if self.operation.loading {
+                    Some("Operation in progress")
+                } else if !has_repo {
+                    Some("Open a repository first")
+                } else {
+                    None
+                },
+            },
+            CommandPaletteItem {
+                id: CommandId::CreateAndPushTag,
+                label: "Create and push tag",
+                description: "Create a lightweight tag on the selected commit or HEAD, then push it to origin",
+                shortcut: "Cmd Shift T",
                 disabled_reason: if self.operation.loading {
                     Some("Operation in progress")
                 } else if !has_repo {

@@ -31,6 +31,7 @@ const DRAG_THRESHOLD: f32 = 5.0;
 impl App {
     pub(crate) fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::NoOp => Task::none(),
             Message::Catalog(message) => self.update_catalog(message),
             Message::RepoOpen(message) => self.update_repo_open(message),
             Message::Checkout(message) => self.update_checkout(message),
@@ -649,6 +650,13 @@ impl App {
             KeyAction::ReleasePromotion => {
                 self.command_palette.open = false;
                 self.update(crate::features::release_prep::Message::Requested.into())
+            }
+            KeyAction::CreateAndPushTag => {
+                self.command_palette.open = false;
+                self.update(
+                    crate::features::tag::Message::CreateAndPushRequested(self.selected_commit())
+                        .into(),
+                )
             }
             KeyAction::NextHunk => self.select_relative_hunk(1),
             KeyAction::PreviousHunk => self.select_relative_hunk(-1),
