@@ -58,7 +58,7 @@ Git 인증 정보나 GitHub 토큰을 직접 설정하거나 보관하지 않습
       </tr>
       <tr>
         <td valign="top">
-          <strong>시각적인 히스토리 수술</strong><br>
+          <strong>검토 가능한 히스토리 편집</strong><br>
           merge, rebase, reword, drop, squash, fixup, edit, reorder, undo, redo
         </td>
         <td valign="top">
