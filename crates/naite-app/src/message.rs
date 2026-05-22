@@ -18,6 +18,7 @@ use crate::state::{
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    NoOp,
     Catalog(catalog::Message),
     RepoOpen(repo_open::Message),
     Checkout(checkout::Message),
@@ -291,6 +292,7 @@ pub enum KeyAction {
     CommandPalettePrevious,
     CommandPaletteRun,
     ReleasePromotion,
+    CreateAndPushTag,
     Enter,
     Escape,
     NextHunk,

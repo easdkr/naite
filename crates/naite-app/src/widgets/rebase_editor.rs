@@ -1,9 +1,12 @@
 use iced::widget::{
-    button, column, container, mouse_area, row, scrollable, stack, text, text::Wrapping,
-    text_input, Space,
+    button, canvas, column, container, mouse_area, pick_list, row, scrollable, stack, text,
+    text::Wrapping, text_input, Space,
 };
-use iced::{mouse, Alignment, Color, Element, Length, Padding, Point};
-use naite_core::{CommitDiff, RebaseAction, WorktreeDiffTarget};
+use iced::{mouse, Alignment, Color, Element, Length, Padding, Point, Rectangle, Renderer, Theme};
+use naite_core::{
+    build_rebase_gutter, pick_inherits_reword, CommitDiff, GraphRow, RebaseAction,
+    WorktreeDiffTarget,
+};
 
 use crate::features::rebase::{
     self, DragState, InteractiveRebaseSession, RebaseApplyMode, RebasePlanPreset, RebasePlanRow,
@@ -14,15 +17,27 @@ use crate::styles;
 use crate::theme::{self, color};
 use crate::Message;
 
+use super::commit_list::{
+    fill_horizontal_segment, fill_vertical_segment, graph_fill, graph_stroke, lane_x, snap,
+    GRAPH_CORNER_RADIUS, GRAPH_LANE_GAP,
+};
 use super::detail_pane::{diff_content, DiffContentProps};
 use super::ROW_HEIGHT;
 
 const MOVE_BUTTON_SIZE: f32 = 22.0;
-const ACTION_COLUMN_WIDTH: f32 = 74.0;
+const ACTION_COLUMN_WIDTH: f32 = 84.0;
 const SHA_COLUMN_WIDTH: f32 = 68.0;
 const INSERTION_LINE_HEIGHT: f32 = 2.0;
 const GHOST_HORIZONTAL_INSET: f32 = 8.0;
-const REBASE_TOOLBAR_HEIGHT: f32 = 52.0;
+const REBASE_TOOLBAR_HEIGHT: f32 = 56.0;
+/// Width of the per-row graph gutter that visualizes squash/fixup grouping.
+/// Sized to fit two lanes (`GRAPH_LANE_LEFT=11 + GRAPH_LANE_GAP=22 = 33`) plus
+/// the node radius (~5) and a small right pad.
+const REBASE_GUTTER_WIDTH: f32 = 42.0;
+/// Radius of the dot drawn at each row's lane in the gutter. Smaller than the
+/// commit-list avatar (which doubles as the node there) because the rebase
+/// gutter has no author info — the dot is purely a topological marker.
+const REBASE_NODE_RADIUS: f32 = 4.5;
 
 pub fn rebase_editor<'a>(
     session: &'a InteractiveRebaseSession,
@@ -30,10 +45,20 @@ pub fn rebase_editor<'a>(
     release_promotion_active: bool,
 ) -> Element<'a, Message> {
     let active_gap = active_insertion_gap(session);
+    let actions: Vec<RebaseAction> = session.plan.iter().map(|row| row.action).collect();
+    let gutter_rows = build_rebase_gutter(&actions);
     let mut body = column![toolbar(session, release_promotion_active), header()].spacing(0);
     body = body.push(insertion_gap(active_gap == Some(0)));
     for (index, row) in session.plan.iter().enumerate() {
-        body = body.push(plan_row(session, row, index));
+        let gutter = gutter_rows.get(index).cloned().unwrap_or_else(|| GraphRow {
+            lane: 0,
+            lanes_in: Vec::new(),
+            lanes_out: Vec::new(),
+            parent_lanes: Vec::new(),
+            total_lanes: 1,
+        });
+        let inherits_reword = pick_inherits_reword(&actions, index);
+        body = body.push(plan_row(session, row, index, gutter, inherits_reword));
         body = body.push(insertion_gap(active_gap == Some(index + 1)));
     }
 
@@ -163,6 +188,118 @@ fn ghost_row<'a>(row_data: &'a RebasePlanRow) -> Element<'a, Message> {
         .into()
 }
 
+/// Per-row gutter canvas for the interactive rebase editor. Renders the
+/// squash/fixup grouping topology supplied by
+/// [`naite_core::build_rebase_gutter`] — trunk picks on lane 0, squash/fixup
+/// children on lane 1, with an elbow drawn on the parent pick's row spawning
+/// lane 1 down to the first child below it. Mirrors `GraphCanvas` in
+/// `commit_list.rs` but with a smaller node gap because the rebase gutter has
+/// no author avatar to fill the dot.
+#[derive(Debug, Clone)]
+struct RebaseGutterCanvas {
+    row: GraphRow,
+    muted: bool,
+}
+
+impl canvas::Program<Message> for RebaseGutterCanvas {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &Self::State,
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<canvas::Geometry> {
+        let mut frame = canvas::Frame::new(renderer, bounds.size());
+        let lane_color = |lane: u8| {
+            let base = color::LANES[lane as usize % color::LANES.len()];
+            if self.muted {
+                color::with_alpha(base, 0.45)
+            } else {
+                base
+            }
+        };
+
+        let y_mid = snap(bounds.height / 2.0);
+        let y_bottom = snap(bounds.height);
+        let y_node_top = snap(y_mid - REBASE_NODE_RADIUS);
+        let y_node_bottom = snap(y_mid + REBASE_NODE_RADIUS);
+        let commit_x = lane_x(self.row.lane, GRAPH_LANE_GAP);
+
+        for &incoming in &self.row.lanes_in {
+            let x = lane_x(incoming, GRAPH_LANE_GAP);
+            let y_end = if incoming == self.row.lane {
+                y_node_top
+            } else if self.row.lanes_out.contains(&incoming) {
+                y_bottom
+            } else {
+                y_mid
+            };
+            fill_vertical_segment(&mut frame, x, 0.0, y_end, lane_color(incoming));
+        }
+
+        for &parent in &self.row.parent_lanes {
+            let target_x = lane_x(parent, GRAPH_LANE_GAP);
+            let stroke_color = lane_color(parent);
+            if parent == self.row.lane {
+                fill_vertical_segment(&mut frame, commit_x, y_node_bottom, y_bottom, stroke_color);
+            } else {
+                let direction = if target_x >= commit_x { 1.0 } else { -1.0 };
+                let radius = GRAPH_CORNER_RADIUS.min((target_x - commit_x).abs() / 2.0);
+                let elbow_y = snap((bounds.height - 6.0).max(y_mid + 6.0));
+                let first_corner_start = Point::new(commit_x, snap(elbow_y - radius));
+                let first_corner_control = Point::new(commit_x, elbow_y);
+                let first_corner_end = Point::new(snap(commit_x + direction * radius), elbow_y);
+                let second_corner_start = Point::new(snap(target_x - direction * radius), elbow_y);
+                let second_corner_control = Point::new(target_x, elbow_y);
+                let second_corner_end = Point::new(target_x, snap(elbow_y + radius));
+
+                fill_vertical_segment(
+                    &mut frame,
+                    commit_x,
+                    y_node_bottom,
+                    first_corner_start.y,
+                    stroke_color,
+                );
+                let first_corner = canvas::Path::new(|p| {
+                    p.move_to(first_corner_start);
+                    p.quadratic_curve_to(first_corner_control, first_corner_end);
+                });
+                frame.stroke(&first_corner, graph_stroke(stroke_color));
+
+                fill_horizontal_segment(
+                    &mut frame,
+                    first_corner_end.x,
+                    second_corner_start.x,
+                    elbow_y,
+                    stroke_color,
+                );
+                let second_corner = canvas::Path::new(|p| {
+                    p.move_to(second_corner_start);
+                    p.quadratic_curve_to(second_corner_control, second_corner_end);
+                });
+                frame.stroke(&second_corner, graph_stroke(stroke_color));
+
+                fill_vertical_segment(
+                    &mut frame,
+                    target_x,
+                    second_corner_end.y,
+                    y_bottom,
+                    stroke_color,
+                );
+            }
+        }
+
+        let node_color = lane_color(self.row.lane);
+        let node = canvas::Path::circle(Point::new(commit_x, y_mid), REBASE_NODE_RADIUS);
+        frame.fill(&node, graph_fill(node_color));
+
+        vec![frame.into_geometry()]
+    }
+}
+
 pub struct RebaseDetailProps<'a> {
     pub session: &'a InteractiveRebaseSession,
     pub diff: Option<&'a CommitDiff>,
@@ -209,8 +346,6 @@ pub fn rebase_detail<'a>(props: RebaseDetailProps<'a>) -> Element<'a, Message> {
                         file_insight,
                         show_file_inspection: false,
                     }),
-                    Space::with_height(theme::SP_MD),
-                    action_picker(session.selected, row.action, session.applying),
                 ]
                 .width(Length::Fill)
                 .spacing(theme::SP_SM),
@@ -251,17 +386,15 @@ fn toolbar(
         .filter(|row| row.action == RebaseAction::Drop)
         .count();
     let replayed = session.plan.len().saturating_sub(dropped);
+    let current_branch = compact_toolbar_label(&session.current_branch.short_name);
     let target_branch = compact_toolbar_label(&session.target.short_name);
     let status = if dropped == 0 {
-        format!("{} commits will replay onto {}", replayed, target_branch)
+        format!("{current_branch} onto {target_branch} | {replayed} replay")
     } else {
-        format!(
-            "{} commits will replay onto {}, {} dropped",
-            replayed, target_branch, dropped
-        )
+        format!("{current_branch} onto {target_branch} | {replayed} replay, {dropped} drop")
     };
     let status = match own_commit_count(session) {
-        Some(own) => format!("{status}, {own} authored"),
+        Some(own) => format!("{status}, {own} own"),
         None => status,
     };
 
@@ -269,75 +402,81 @@ fn toolbar(
     let pick_mine_enabled = can_pick_mine(session);
     let preset_enabled = !session.applying && !drag_in_progress(session);
 
-    let current_branch = compact_toolbar_label(&session.current_branch.short_name);
-
     let mut actions = row![
-        button(text("Keep Mine").size(theme::FS_SM))
-            .padding(Padding::from([5, 10]))
-            .style(styles::subtle_button)
-            .on_press_maybe(pick_mine_enabled.then_some(Message::from(
-                rebase::Message::PresetRequested(RebasePlanPreset::KeepMine,)
-            ))),
-        button(text("Squash Mine").size(theme::FS_SM))
-            .padding(Padding::from([5, 10]))
-            .style(styles::subtle_button)
-            .on_press_maybe(pick_mine_enabled.then_some(Message::from(
-                rebase::Message::PresetRequested(RebasePlanPreset::SquashMine,)
-            ))),
-        button(text("Squash All").size(theme::FS_SM))
-            .padding(Padding::from([5, 10]))
-            .style(styles::subtle_button)
-            .on_press_maybe(preset_enabled.then_some(Message::from(
-                rebase::Message::PresetRequested(RebasePlanPreset::SquashAll,)
-            ))),
-        button(text("Apply").size(theme::FS_SM))
-            .padding(Padding::from([5, 10]))
-            .style(styles::primary_button)
-            .on_press_maybe(apply_enabled.then_some(Message::from(
-                rebase::Message::ApplyRequested(RebaseApplyMode::RebaseOnly,)
-            ))),
+        rebase_toolbar_button(
+            IconName::GitCommit,
+            "Keep",
+            RebaseToolbarTone::Neutral,
+            pick_mine_enabled,
+            Message::from(rebase::Message::PresetRequested(RebasePlanPreset::KeepMine,)),
+        ),
+        rebase_toolbar_button(
+            IconName::GitMerge,
+            "Squash Mine",
+            RebaseToolbarTone::Neutral,
+            pick_mine_enabled,
+            Message::from(rebase::Message::PresetRequested(
+                RebasePlanPreset::SquashMine,
+            )),
+        ),
+        rebase_toolbar_button(
+            IconName::GitMerge,
+            "Squash All",
+            RebaseToolbarTone::Neutral,
+            preset_enabled,
+            Message::from(rebase::Message::PresetRequested(
+                RebasePlanPreset::SquashAll,
+            )),
+        ),
+        rebase_toolbar_button(
+            IconName::GitBranch,
+            "Apply",
+            RebaseToolbarTone::Primary,
+            apply_enabled,
+            Message::from(rebase::Message::ApplyRequested(RebaseApplyMode::RebaseOnly,)),
+        ),
     ]
     .align_y(Alignment::Center)
-    .spacing(theme::SP_MD);
+    .spacing(theme::SP_SM);
 
     if release_promotion_active {
-        actions = actions.push(
-            button(text("Auto Promote").size(theme::FS_SM))
-                .padding(Padding::from([5, 10]))
-                .style(styles::danger_button)
-                .on_press_maybe(apply_enabled.then_some(Message::from(
-                    rebase::Message::ApplyRequested(RebaseApplyMode::ReleasePromotionAuto),
-                ))),
-        );
+        actions = actions.push(rebase_toolbar_button(
+            IconName::Cloud,
+            "Promote",
+            RebaseToolbarTone::Danger,
+            apply_enabled,
+            Message::from(rebase::Message::ApplyRequested(
+                RebaseApplyMode::ReleasePromotionAuto,
+            )),
+        ));
     } else {
-        actions = actions.push(
-            button(text("Apply + Push").size(theme::FS_SM))
-                .padding(Padding::from([5, 10]))
-                .style(styles::danger_button)
-                .on_press_maybe(apply_enabled.then_some(Message::from(
-                    rebase::Message::ApplyRequested(RebaseApplyMode::RebaseThenForcePush),
-                ))),
-        );
+        actions = actions.push(rebase_toolbar_button(
+            IconName::Cloud,
+            "Push",
+            RebaseToolbarTone::Danger,
+            apply_enabled,
+            Message::from(rebase::Message::ApplyRequested(
+                RebaseApplyMode::RebaseThenForcePush,
+            )),
+        ));
     }
 
-    actions = actions.push(
-        button(text("Cancel").size(theme::FS_SM))
-            .padding(Padding::from([5, 10]))
-            .style(styles::subtle_button)
-            .on_press(Message::from(rebase::Message::Cancelled)),
-    );
+    actions = actions.push(rebase_toolbar_button(
+        IconName::Close,
+        "Cancel",
+        RebaseToolbarTone::Neutral,
+        true,
+        Message::from(rebase::Message::Cancelled),
+    ));
 
     container(
         row![
             column![
-                text(format!(
-                    "Interactive Rebase: {} onto {}",
-                    current_branch, target_branch
-                ))
-                .size(theme::FS_BASE)
-                .font(theme::font_semibold())
-                .color(color::TEXT)
-                .wrapping(Wrapping::None),
+                text("Interactive Rebase")
+                    .size(theme::FS_BASE)
+                    .font(theme::font_semibold())
+                    .color(color::TEXT)
+                    .wrapping(Wrapping::None),
                 text(status)
                     .size(theme::FS_SM)
                     .font(theme::font_regular())
@@ -352,7 +491,7 @@ fn toolbar(
         .spacing(theme::SP_MD)
         .height(Length::Fill),
     )
-    .padding(Padding::from([theme::SP_MD, theme::SP_LG]))
+    .padding(Padding::from([theme::SP_SM, theme::SP_LG]))
     .width(Length::Fill)
     .height(Length::Fixed(REBASE_TOOLBAR_HEIGHT))
     .style(styles::commit_list_header)
@@ -360,7 +499,7 @@ fn toolbar(
 }
 
 fn compact_toolbar_label(label: &str) -> String {
-    const MAX_CHARS: usize = 28;
+    const MAX_CHARS: usize = 22;
     let mut chars = label.chars();
     let prefix = chars.by_ref().take(MAX_CHARS).collect::<String>();
     if chars.next().is_some() {
@@ -370,10 +509,61 @@ fn compact_toolbar_label(label: &str) -> String {
     }
 }
 
+#[derive(Clone, Copy)]
+enum RebaseToolbarTone {
+    Neutral,
+    Primary,
+    Danger,
+}
+
+fn rebase_toolbar_button<'a>(
+    icon: IconName,
+    label: &'static str,
+    tone: RebaseToolbarTone,
+    enabled: bool,
+    message: Message,
+) -> Element<'a, Message> {
+    let tint = if !enabled {
+        color::TEXT_SUBTLE
+    } else {
+        match tone {
+            RebaseToolbarTone::Neutral => color::TEXT_MUTED,
+            RebaseToolbarTone::Primary => color::ACCENT,
+            RebaseToolbarTone::Danger => color::DANGER,
+        }
+    };
+    let text_color = if enabled {
+        color::TEXT
+    } else {
+        color::TEXT_SUBTLE
+    };
+    let content = row![
+        icons::icon(icon, 14, tint),
+        text(label)
+            .size(theme::FS_SM)
+            .font(theme::font_semibold())
+            .wrapping(Wrapping::None)
+            .color(text_color),
+    ]
+    .align_y(Alignment::Center)
+    .spacing(6);
+
+    button(content)
+        .padding(Padding::from([4, 8]))
+        .style(styles::toolbar_button)
+        .on_press_maybe(enabled.then_some(message))
+        .into()
+}
+
 fn header<'a>() -> Element<'a, Message> {
+    // Pre-gutter this spacer was 92.0 (matching plan_row's leading columns
+    // plus a small fudge for container-padding diffs). The gutter adds one new
+    // child (REBASE_GUTTER_WIDTH) and one new SP_SM spacing slot between it
+    // and its neighbours, so we shift the header right by the same amount.
+    const HEADER_LEADING_SPACER: f32 = 92.0 + REBASE_GUTTER_WIDTH + theme::SP_SM as f32;
     container(
         row![
-            Space::with_width(Length::Fixed(92.0)),
+            Space::with_width(Length::Fixed(HEADER_LEADING_SPACER)),
             container(
                 text("ACTION")
                     .size(theme::FS_XS)
@@ -407,6 +597,8 @@ fn plan_row<'a>(
     session: &'a InteractiveRebaseSession,
     row_data: &'a RebasePlanRow,
     index: usize,
+    gutter_row: GraphRow,
+    inherits_reword: bool,
 ) -> Element<'a, Message> {
     let selected = session.selected == index;
     let drag_active = session.drag.as_ref().is_some_and(|drag| drag.started);
@@ -422,6 +614,13 @@ fn plan_row<'a>(
     let bar = container(Space::new(Length::Fixed(2.0), Length::Fixed(ROW_HEIGHT)))
         .style(styles::solid_bar(bar_color));
 
+    let gutter = canvas(RebaseGutterCanvas {
+        row: gutter_row,
+        muted: row_data.action == RebaseAction::Drop,
+    })
+    .width(Length::Fixed(REBASE_GUTTER_WIDTH))
+    .height(Length::Fixed(ROW_HEIGHT));
+
     let up = move_button(
         IconName::ChevronUp,
         index > 0,
@@ -435,22 +634,25 @@ fn plan_row<'a>(
         selected,
     );
 
-    let action = button(
-        text(action_label(row_data.action))
-            .size(theme::FS_SM)
-            .font(theme::font_semibold())
-            .color(action_color(row_data.action)),
-    )
-    .padding(Padding::from([3, 8]))
-    .style(if row_data.action == RebaseAction::Drop {
-        styles::danger_button
+    // A pick whose group contains a squash gets git's combined-message editor
+    // at rebase time, which effectively rewords it — flag that here by
+    // tinting the chip ACCENT (matching the reword action's own colour).
+    let chip_color = if inherits_reword {
+        color::ACCENT
     } else {
-        styles::subtle_button
-    })
-    .on_press(Message::from(rebase::Message::ActionSet(
-        index,
-        next_action(row_data.action, index),
-    )));
+        action_color(row_data.action)
+    };
+    let action: Element<'a, Message> = pick_list(
+        allowed_actions(index),
+        Some(ActionOption(row_data.action)),
+        move |opt| Message::from(rebase::Message::ActionSet(index, opt.0)),
+    )
+    .padding(Padding::from([2, 6]))
+    .text_size(theme::FS_SM)
+    .style(styles::rebase_action_pick_list(chip_color))
+    .menu_style(styles::release_prep_pick_list_menu)
+    .width(Length::Fill)
+    .into();
 
     let sha = text(short_id(&row_data.commit.id))
         .size(theme::FS_SM)
@@ -487,6 +689,7 @@ fn plan_row<'a>(
 
     let content = row![
         bar,
+        gutter,
         up,
         down,
         container(action).width(Length::Fixed(ACTION_COLUMN_WIDTH)),
@@ -620,22 +823,27 @@ fn selected_operation<'a>(
     session: &'a InteractiveRebaseSession,
     row: &'a RebasePlanRow,
 ) -> Element<'a, Message> {
+    let actions: Vec<RebaseAction> = session.plan.iter().map(|row| row.action).collect();
+    let inherits_reword = pick_inherits_reword(&actions, session.selected);
+    let action_text_color = if inherits_reword {
+        color::ACCENT
+    } else {
+        action_color(row.action)
+    };
+    let effect: String = if inherits_reword {
+        format!(
+            "{} A squash below will reopen git's message editor for this pick, so its message gets rewritten too.",
+            action_description(row.action)
+        )
+    } else {
+        action_description(row.action).to_string()
+    };
     column![
         detail_label("SELECTED OPERATION"),
-        detail_value(
-            "Action",
-            action_label(row.action),
-            action_color(row.action),
-            false
-        ),
+        detail_value("Action", action_label(row.action), action_text_color, false),
         detail_value("Commit", &row.commit.id, color::TEXT, true),
         detail_value("Message", &row.commit.summary, color::TEXT, false),
-        detail_value(
-            "Effect",
-            action_description(row.action),
-            color::TEXT_MUTED,
-            false,
-        ),
+        detail_value("Effect", &effect, color::TEXT_MUTED, false),
         if row.action == RebaseAction::Reword {
             reword_detail(session, row)
         } else {
@@ -659,53 +867,30 @@ fn reword_detail<'a>(
     detail_value("New message", message, color::ACCENT, false)
 }
 
-fn action_picker(
-    index: usize,
-    selected: RebaseAction,
-    applying: bool,
-) -> Element<'static, Message> {
-    let mut rows = column![].spacing(theme::SP_SM);
-    for group in [
-        [RebaseAction::Pick, RebaseAction::Reword, RebaseAction::Edit],
-        [
-            RebaseAction::Squash,
-            RebaseAction::Fixup,
-            RebaseAction::Drop,
-        ],
-    ] {
-        let mut action_row = row![].spacing(theme::SP_SM).align_y(Alignment::Center);
-        for action in group {
-            let enabled =
-                !applying && action != selected && !(index == 0 && is_merge_action(action));
-            action_row = action_row.push(action_choice(index, action, enabled));
-        }
-        rows = rows.push(action_row);
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ActionOption(RebaseAction);
 
-    column![detail_label("CHANGE ACTION"), rows]
-        .spacing(theme::SP_SM)
-        .into()
+impl std::fmt::Display for ActionOption {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(action_label(self.0))
+    }
 }
 
-fn action_choice(index: usize, action: RebaseAction, enabled: bool) -> Element<'static, Message> {
-    button(
-        text(action_label(action))
-            .size(theme::FS_SM)
-            .font(theme::font_semibold())
-            .color(if action == RebaseAction::Drop {
-                Color::WHITE
-            } else {
-                action_color(action)
-            }),
-    )
-    .padding(Padding::from([4, 8]))
-    .style(if action == RebaseAction::Drop {
-        styles::danger_button
-    } else {
-        styles::subtle_button
-    })
-    .on_press_maybe(enabled.then_some(Message::from(rebase::Message::ActionSet(index, action))))
-    .into()
+/// The full action menu for a rebase row. squash/fixup are filtered out at the
+/// first row because they would have no prior operation to merge into.
+fn allowed_actions(index: usize) -> Vec<ActionOption> {
+    [
+        RebaseAction::Pick,
+        RebaseAction::Reword,
+        RebaseAction::Edit,
+        RebaseAction::Squash,
+        RebaseAction::Fixup,
+        RebaseAction::Drop,
+    ]
+    .into_iter()
+    .filter(|action| !(index == 0 && is_merge_action(*action)))
+    .map(ActionOption)
+    .collect()
 }
 
 fn is_merge_action(action: RebaseAction) -> bool {
@@ -720,12 +905,12 @@ fn detail_label(label: &'static str) -> Element<'static, Message> {
         .into()
 }
 
-fn detail_value<'a>(
+fn detail_value(
     label: &'static str,
-    value: &'a str,
+    value: &str,
     value_color: Color,
     mono: bool,
-) -> Element<'a, Message> {
+) -> Element<'static, Message> {
     let value_text = if mono {
         text(value.to_string())
             .size(theme::FS_SM)
@@ -757,18 +942,6 @@ fn action_description(action: RebaseAction) -> &'static str {
             "Combine this commit into the previous operation and discard this message."
         }
         RebaseAction::Drop => "Omit this commit from the rewritten branch.",
-    }
-}
-
-fn next_action(action: RebaseAction, index: usize) -> RebaseAction {
-    match action {
-        RebaseAction::Pick => RebaseAction::Reword,
-        RebaseAction::Reword => RebaseAction::Edit,
-        RebaseAction::Edit if index == 0 => RebaseAction::Drop,
-        RebaseAction::Edit => RebaseAction::Squash,
-        RebaseAction::Squash => RebaseAction::Fixup,
-        RebaseAction::Fixup => RebaseAction::Drop,
-        RebaseAction::Drop => RebaseAction::Pick,
     }
 }
 

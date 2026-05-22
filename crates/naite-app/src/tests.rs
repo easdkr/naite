@@ -2053,6 +2053,117 @@ fn tag_create_defaults_to_timestamp_name() {
 }
 
 #[test]
+fn tag_deployment_command_shows_keyboard_shortcut() {
+    let app = App::default();
+    let item = app
+        .command_palette_items()
+        .into_iter()
+        .find(|item| item.id == CommandId::CreateAndPushTag)
+        .unwrap();
+
+    assert_eq!(item.label, "Create and push tag");
+    assert_eq!(item.shortcut, "Cmd Shift T");
+    assert_eq!(item.disabled_reason, Some("Open a repository first"));
+
+    let app = App {
+        repo: RepositoryState {
+            path: Some(PathBuf::from("/tmp/naite")),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let item = app
+        .command_palette_items()
+        .into_iter()
+        .find(|item| item.id == CommandId::CreateAndPushTag)
+        .unwrap();
+
+    assert_eq!(item.disabled_reason, None);
+}
+
+#[test]
+fn tag_deployment_command_opens_push_enabled_tag_modal() {
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(PathBuf::from("/tmp/naite")),
+            commits: vec![commit("a111111", "prepare release tag", "june")],
+            ..Default::default()
+        },
+        selection: SelectionState {
+            selected: Some(0),
+            selected_commit_id: Some("a111111".into()),
+            ..Default::default()
+        },
+        command_palette: CommandPaletteState {
+            open: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let _ = app.handle_key_action(KeyAction::CreateAndPushTag);
+
+    assert!(!app.command_palette.open);
+    assert!(app.tag_create.open);
+    assert!(app.tag_create.push_after_create);
+    assert_eq!(
+        app.tag_create
+            .target_commit
+            .as_ref()
+            .map(|commit| commit.short_id.as_str()),
+        Some("a111111")
+    );
+}
+
+#[test]
+fn tag_create_from_context_menu_closes_context_menu() {
+    let commit = commit("a111111", "add tag modal", "june");
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(PathBuf::from("/tmp/naite")),
+            ..Default::default()
+        },
+        selection: SelectionState {
+            context_menu: Some(crate::state::ContextMenuState {
+                kind: crate::state::ContextMenuKind::Commit(commit.clone()),
+                position: iced::Point::ORIGIN,
+            }),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let _ = app.update_tag(tag_feature::Message::CreateRequested(Some(commit)));
+
+    assert!(app.tag_create.open);
+    assert!(app.selection.context_menu.is_none());
+}
+
+#[test]
+fn tag_delete_from_context_menu_closes_context_menu() {
+    let target = tag("v1.0.0");
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(PathBuf::from("/tmp/naite")),
+            ..Default::default()
+        },
+        selection: SelectionState {
+            context_menu: Some(crate::state::ContextMenuState {
+                kind: crate::state::ContextMenuKind::Ref(target.clone()),
+                position: iced::Point::ORIGIN,
+            }),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let _ = app.update_tag(tag_feature::Message::DeleteRequested(target));
+
+    assert!(app.selection.tag_delete_confirmation.is_some());
+    assert!(app.selection.context_menu.is_none());
+}
+
+#[test]
 fn tag_create_semver_mode_suggests_next_patch_or_initial_version() {
     let mut app = App {
         repo: RepositoryState {
@@ -6984,6 +7095,21 @@ fn keyboard_shortcut_opens_release_promotion_even_when_text_input_captured() {
     assert!(matches!(
         message,
         Some(Message::Keyboard(KeyAction::ReleasePromotion))
+    ));
+}
+
+#[test]
+fn keyboard_shortcut_opens_tag_deployment_even_when_text_input_captured() {
+    let message = keyboard_shortcut(
+        Key::Character("ㅅ".into()),
+        Physical::Code(Code::KeyT),
+        Modifiers::COMMAND | Modifiers::SHIFT,
+        event::Status::Captured,
+    );
+
+    assert!(matches!(
+        message,
+        Some(Message::Keyboard(KeyAction::CreateAndPushTag))
     ));
 }
 

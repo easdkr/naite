@@ -143,6 +143,9 @@ pub(crate) fn keyboard_shortcut(
     if is_key(&key, physical_key, Code::KeyR, "r") && command && modifiers.shift() {
         return Some(Message::Keyboard(KeyAction::ReleasePromotion));
     }
+    if is_key(&key, physical_key, Code::KeyT, "t") && command && modifiers.shift() {
+        return Some(Message::Keyboard(KeyAction::CreateAndPushTag));
+    }
 
     if captured {
         return match key.as_ref() {
@@ -224,6 +227,9 @@ fn rebase_keyboard_shortcut(
     }
     if is_key(&key, physical_key, Code::KeyR, "r") && command && modifiers.shift() {
         return Some(Message::Keyboard(KeyAction::ReleasePromotion));
+    }
+    if is_key(&key, physical_key, Code::KeyT, "t") && command && modifiers.shift() {
+        return Some(Message::Keyboard(KeyAction::CreateAndPushTag));
     }
 
     if captured {

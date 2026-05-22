@@ -172,15 +172,14 @@ pub fn diff_ctx(_: &Theme) -> container::Style {
     }
 }
 
-/// Header row above the commit list — uses BG with a hairline bottom border.
+/// Chrome surface used above and between row lists (rebase toolbar, column
+/// headers, commit list header). Reads as a chrome plate that lifts above the
+/// BG row area through surface tone alone — no border, no grid line — so
+/// stacked headers don't produce the table-grid effect iced's all-sides
+/// `Border` would otherwise force.
 pub fn commit_list_header(_: &Theme) -> container::Style {
     container::Style {
-        background: Some(Background::Color(color::BG)),
-        border: Border {
-            color: color::BORDER,
-            width: 1.0,
-            radius: 0.0.into(),
-        },
+        background: Some(Background::Color(color::SURFACE_1)),
         ..Default::default()
     }
 }
@@ -276,6 +275,33 @@ pub fn release_prep_pick_list_menu(_: &Theme) -> menu::Style {
         text_color: color::TEXT,
         selected_text_color: Color::WHITE,
         selected_background: Background::Color(color::ACCENT),
+    }
+}
+
+/// Factory: rebase row action chip as a pick_list. Reads as a chip in the
+/// resting state — SURFACE_2 fill, no border — and only takes on a 1px ACCENT
+/// outline while its menu is open so the active row is unambiguous. The
+/// action's semantic color carries the closed-state cue (purple/yellow/red).
+pub fn rebase_action_pick_list(
+    label_color: Color,
+) -> impl Fn(&Theme, pick_list::Status) -> pick_list::Style {
+    move |_, status| {
+        let (background, border_color, border_width) = match status {
+            pick_list::Status::Active => (color::SURFACE_2, Color::TRANSPARENT, 0.0),
+            pick_list::Status::Hovered => (color::SURFACE_3, Color::TRANSPARENT, 0.0),
+            pick_list::Status::Opened => (color::SURFACE_3, color::ACCENT, 1.0),
+        };
+        pick_list::Style {
+            text_color: label_color,
+            placeholder_color: color::TEXT_SUBTLE,
+            handle_color: color::with_alpha(color::TEXT_MUTED, 0.7),
+            background: Background::Color(background),
+            border: Border {
+                color: border_color,
+                width: border_width,
+                radius: theme::R_SM.into(),
+            },
+        }
     }
 }
 

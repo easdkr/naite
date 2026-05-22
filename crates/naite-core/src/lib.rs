@@ -26,7 +26,9 @@ pub use commits::{CommitMessage, CommitPage, CommitPageCursor, CommitSummary};
 pub use diff::{ChangeStatus, CommitDiff, DiffLine, FileChange, Hunk};
 pub use error::Error;
 pub use file_inspect::{BlameLine, FileHistoryEntry};
-pub use graph::{compute_graph_layout, GraphLayout, GraphRow};
+pub use graph::{
+    build_rebase_gutter, compute_graph_layout, pick_inherits_reword, GraphLayout, GraphRow,
+};
 pub use highlight::{
     detect_language, highlight_diff, HighlightedDiff, HighlightedHunk, HighlightedLine, Language,
     LineState, TokenKind, TokenSpan, MAX_LINE_BYTES, MAX_SPANS_PER_LINE,

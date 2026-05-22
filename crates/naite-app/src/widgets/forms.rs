@@ -1,9 +1,10 @@
 //! User-input forms: commit composer, branch creation, branch rename, and stash creation.
 
 use iced::widget::{
-    button, checkbox, column, container, row, text, text::Wrapping, text_editor, text_input, Space,
+    button, checkbox, column, container, mouse_area, row, text, text::Wrapping, text_editor,
+    text_input, Space,
 };
-use iced::{Alignment, Element, Length, Padding};
+use iced::{Alignment, Border, Element, Length, Padding};
 use naite_core::WorktreeStatusDetail;
 
 use crate::features::{
@@ -573,59 +574,46 @@ pub fn tag_create_prompt<'a>(
         mode_row = mode_row.push(tag_mode_button(mode, state.name_mode, loading));
     }
 
-    container(
-        column![
-            row![
-                column![
-                    text("Create tag")
-                        .size(theme::FS_BASE)
-                        .font(theme::font_semibold())
-                        .color(color::TEXT),
-                    text(format!("Target: {target}"))
-                        .size(theme::FS_SM)
-                        .font(theme::font_regular())
-                        .color(color::TEXT_MUTED),
-                ]
-                .spacing(2)
-                .width(Length::Fill),
-                checkbox("Push after create", state.push_after_create)
-                    .on_toggle(|checked| {
-                        Message::from(tag::Message::CreatePushAfterChanged(checked))
-                    })
-                    .size(theme::FS_SM),
-            ]
-            .align_y(Alignment::Center)
-            .spacing(theme::SP_MD),
-            mode_row,
-            row![
-                text_input("v1.0.0", &state.name)
-                    .id(input_id.clone())
-                    .style(styles::form_text_input)
-                    .on_input(|name| Message::from(tag::Message::CreateNameChanged(name)))
-                    .on_submit(Message::from(tag::Message::CreateSubmitted))
-                    .padding(Padding::from([5, 10]))
-                    .size(theme::FS_SM)
-                    .width(Length::Fill),
-                button(form_button_label("Cancel"))
-                    .padding(Padding::from([5, 10]))
-                    .style(styles::subtle_button)
-                    .on_press(Message::from(tag::Message::CreateCancelled)),
-                button(form_button_label("Create"))
-                    .padding(Padding::from([5, 10]))
-                    .style(styles::primary_button)
-                    .on_press_maybe(
-                        (!loading && !name_empty)
-                            .then_some(Message::from(tag::Message::CreateSubmitted))
-                    ),
-            ]
-            .align_y(Alignment::Center)
-            .spacing(theme::SP_MD),
+    column![
+        text("Create tag")
+            .size(theme::FS_BASE)
+            .font(theme::font_semibold())
+            .color(color::TEXT),
+        text(format!("Target: {target}"))
+            .size(theme::FS_SM)
+            .font(theme::font_regular())
+            .color(color::TEXT_MUTED)
+            .wrapping(Wrapping::Word),
+        Space::with_height(theme::SP_SM),
+        mode_row,
+        text_input("v1.0.0", &state.name)
+            .id(input_id.clone())
+            .style(styles::form_text_input)
+            .on_input(|name| Message::from(tag::Message::CreateNameChanged(name)))
+            .on_submit(Message::from(tag::Message::CreateSubmitted))
+            .padding(Padding::from([6, 10]))
+            .size(theme::FS_SM)
+            .width(Length::Fill),
+        tag_push_toggle(state.push_after_create, loading),
+        Space::with_height(theme::SP_SM),
+        row![
+            Space::with_width(Length::Fill),
+            button(text("Cancel").size(theme::FS_SM))
+                .padding(Padding::from([5, 10]))
+                .style(styles::subtle_button)
+                .on_press(Message::from(tag::Message::CreateCancelled)),
+            button(text("Create").size(theme::FS_SM))
+                .padding(Padding::from([5, 10]))
+                .style(styles::primary_button)
+                .on_press_maybe(
+                    (!loading && !name_empty)
+                        .then_some(Message::from(tag::Message::CreateSubmitted))
+                ),
         ]
+        .align_y(Alignment::Center)
         .spacing(theme::SP_SM),
-    )
-    .padding(theme::SP_MD)
-    .width(Length::Fill)
-    .style(styles::inset_card)
+    ]
+    .spacing(theme::SP_SM)
     .into()
 }
 
@@ -651,6 +639,75 @@ fn tag_mode_button(
         (!loading && !active).then_some(Message::from(tag::Message::CreateNameModeChanged(mode))),
     )
     .into()
+}
+
+fn tag_push_toggle(checked: bool, loading: bool) -> Element<'static, Message> {
+    let content = container(
+        row![
+            tag_toggle_indicator(checked),
+            text("Push after create")
+                .size(theme::FS_SM)
+                .font(if checked {
+                    theme::font_semibold()
+                } else {
+                    theme::font_regular()
+                })
+                .color(if checked {
+                    color::TEXT
+                } else {
+                    color::TEXT_MUTED
+                })
+                .wrapping(Wrapping::None),
+        ]
+        .align_y(Alignment::Center)
+        .spacing(theme::SP_XS),
+    )
+    .padding(Padding::from([2, 0]));
+
+    if loading {
+        content.into()
+    } else {
+        mouse_area(content)
+            .on_press(Message::from(tag::Message::CreatePushAfterChanged(
+                !checked,
+            )))
+            .into()
+    }
+}
+
+fn tag_toggle_indicator(checked: bool) -> Element<'static, Message> {
+    let mark: Element<'static, Message> = if checked {
+        text("✓")
+            .size(theme::FS_XS)
+            .font(theme::font_semibold())
+            .color(color::ACCENT)
+            .into()
+    } else {
+        Space::new(0.0, 0.0).into()
+    };
+
+    container(mark)
+        .width(Length::Fixed(12.0))
+        .height(Length::Fixed(12.0))
+        .center_x(Length::Fixed(12.0))
+        .center_y(Length::Fixed(12.0))
+        .style(move |_| {
+            let border_color = if checked {
+                color::ACCENT
+            } else {
+                color::BORDER
+            };
+            container::Style {
+                background: None,
+                border: Border {
+                    color: border_color,
+                    width: 1.0,
+                    radius: theme::R_SM.into(),
+                },
+                ..Default::default()
+            }
+        })
+        .into()
 }
 
 fn form_button_label<'a>(label: &'a str) -> Element<'a, Message> {

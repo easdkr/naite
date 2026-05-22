@@ -259,14 +259,6 @@ impl App {
             ));
         }
 
-        if self.tag_create.open {
-            root = root.push(widgets::tag_create_prompt(
-                &self.tag_create,
-                self.operation.loading,
-                &self.tag_create_input_id,
-            ));
-        }
-
         root = root.push(container(pane_grid).height(Length::Fill));
 
         let base: Element<'_, Message> = root.into();
@@ -373,6 +365,17 @@ impl App {
             overlays.push(widgets::modal(
                 widgets::tag_delete_prompt(prompt, self.operation.loading),
                 Message::from(tag::Message::DeleteCancelled),
+            ));
+        }
+
+        if self.tag_create.open {
+            overlays.push(widgets::modal(
+                widgets::tag_create_prompt(
+                    &self.tag_create,
+                    self.operation.loading,
+                    &self.tag_create_input_id,
+                ),
+                Message::from(tag::Message::CreateCancelled),
             ));
         }
 
