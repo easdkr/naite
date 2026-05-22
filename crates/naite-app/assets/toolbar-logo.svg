@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="naite toolbar logo">
+  <defs>
+    <linearGradient id="ring" x1="57" y1="70" x2="198" y2="188" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f7d08a"/>
+      <stop offset="0.55" stop-color="#d7a35f"/>
+      <stop offset="1" stop-color="#8bc6b3"/>
+    </linearGradient>
+    <linearGradient id="graph" x1="57" y1="180" x2="198" y2="72" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#37d7c6"/>
+      <stop offset="1" stop-color="#f36d4f"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="58" fill="#16161D"/>
+  <circle cx="128" cy="128" r="82" fill="#08080B" opacity="0.46"/>
+  <ellipse cx="128" cy="128" rx="70" ry="52" fill="none" stroke="url(#ring)" stroke-width="8" stroke-linecap="round" transform="rotate(-18 128 128)"/>
+  <ellipse cx="128" cy="128" rx="52" ry="38" fill="none" stroke="#f0bf78" stroke-width="7" stroke-linecap="round" opacity="0.92" transform="rotate(-12 128 128)"/>
+  <ellipse cx="128" cy="128" rx="34" ry="25" fill="none" stroke="#82d2bd" stroke-width="7" stroke-linecap="round" opacity="0.9" transform="rotate(15 128 128)"/>
+  <ellipse cx="128" cy="128" rx="15" ry="11" fill="none" stroke="#f6e2b5" stroke-width="6" stroke-linecap="round" transform="rotate(-20 128 128)"/>
+  <path d="M61 178c28-16 42-25 61-20 24 6 33-25 55-45 13-12 24-19 33-26" fill="none" stroke="url(#graph)" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="61" cy="178" r="13" fill="#37d7c6"/>
+  <circle cx="122" cy="158" r="13" fill="#f6e2b5"/>
+  <circle cx="177" cy="113" r="13" fill="#8bc6b3"/>
+  <circle cx="210" cy="87" r="13" fill="#f36d4f"/>
+  <circle cx="61" cy="178" r="6" fill="#16161D"/>
+  <circle cx="122" cy="158" r="6" fill="#16161D"/>
+  <circle cx="177" cy="113" r="6" fill="#16161D"/>
+  <circle cx="210" cy="87" r="6" fill="#16161D"/>
+</svg>

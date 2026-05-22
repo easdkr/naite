@@ -15,7 +15,7 @@ use crate::Message;
 
 pub const TOOLBAR_HEIGHT: f32 = 44.0;
 const TOOLBAR_LOGO_SIZE: f32 = 28.0;
-const TOOLBAR_LOGO_SVG: &[u8] = include_bytes!("../../assets/app-icon.svg");
+const TOOLBAR_LOGO_SVG: &[u8] = include_bytes!("../../assets/toolbar-logo.svg");
 
 pub struct ToolbarProps<'a> {
     pub repo_path: Option<&'a Path>,

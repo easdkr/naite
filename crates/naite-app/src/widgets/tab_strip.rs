@@ -100,11 +100,11 @@ fn new_repo_button<'a>(open: bool) -> Element<'a, Message> {
                 .wrapping(Wrapping::None)
                 .color(color::TEXT_MUTED),
             Space::with_width(Length::Fill),
-            text(if open { "−" } else { "+" })
-                .size(theme::FS_SM)
-                .font(theme::font_semibold())
-                .wrapping(Wrapping::None)
-                .color(color::TEXT_SUBTLE),
+            icons::icon(
+                new_repo_toggle_icon(open),
+                TAB_ICON_SIZE,
+                color::TEXT_SUBTLE,
+            ),
         ]
         .align_y(Alignment::Center)
         .spacing(theme::SP_SM)
@@ -155,6 +155,14 @@ fn new_repo_menu<'a>() -> Element<'a, Message> {
     .width(Length::Fill)
     .style(styles::inset_card)
     .into()
+}
+
+fn new_repo_toggle_icon(open: bool) -> IconName {
+    if open {
+        IconName::ChevronUp
+    } else {
+        IconName::ChevronDown
+    }
 }
 
 fn menu_item<'a>(icon: IconName, label: &'a str, message: Message) -> Element<'a, Message> {
