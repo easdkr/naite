@@ -86,6 +86,24 @@ pub fn status_badge(accent: Color) -> impl Fn(&Theme) -> container::Style {
     }
 }
 
+pub fn graph_ref_pill(
+    background: Color,
+    border_color: Color,
+    text_color: Color,
+    radius: f32,
+) -> impl Fn(&Theme) -> container::Style {
+    move |_| container::Style {
+        background: Some(Background::Color(background)),
+        border: Border {
+            color: border_color,
+            width: 1.0,
+            radius: radius.into(),
+        },
+        text_color: Some(text_color),
+        ..Default::default()
+    }
+}
+
 /// Card used for compact placeholders and similar inset surfaces.
 pub fn inset_card(_: &Theme) -> container::Style {
     container::Style {
