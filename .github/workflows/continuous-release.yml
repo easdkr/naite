@@ -1,0 +1,179 @@
+name: Continuous Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: continuous-release
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    name: Build macOS app
+    runs-on: macos-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+              | sh -s -- -y --profile minimal --default-toolchain stable
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustc -Vv
+
+      - name: Resolve release version
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.cargo/bin:$PATH"
+
+          app_version="$(cargo pkgid -p naite-app | sed 's/.*#//')"
+          build_id="${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+          release_tag="v${app_version}-build.${build_id}"
+
+          {
+            echo "app_version=$app_version"
+            echo "build_id=$build_id"
+            echo "tag=$release_tag"
+            echo "title=naite v${app_version} build ${build_id}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-cargo-
+
+      - name: Build app bundle
+        id: bundle
+        shell: bash
+        env:
+          NAITE_BUNDLE_SHORT_VERSION: ${{ steps.release.outputs.app_version }}
+          NAITE_BUNDLE_VERSION: ${{ steps.release.outputs.build_id }}
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.cargo/bin:$PATH"
+          bundle_path="$(scripts/macos-bundle.sh --release)"
+          echo "path=$bundle_path" >> "$GITHUB_OUTPUT"
+
+      - name: Ad-hoc sign app
+        shell: bash
+        run: |
+          set -euo pipefail
+          codesign --force --deep --sign - "${{ steps.bundle.outputs.path }}"
+          codesign --verify --deep --strict --verbose=2 "${{ steps.bundle.outputs.path }}"
+
+      - name: Package DMG
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.cargo/bin:$PATH"
+
+          host="$(rustc -vV | sed -n 's/^host: //p')"
+          arch="${host%-apple-darwin}"
+          asset_base="naite-${{ steps.release.outputs.tag }}-macos-${arch}"
+          dmg_root="target/release/dmg-root"
+          dmg_path="target/release/${asset_base}.dmg"
+          checksum_path="${dmg_path}.sha256"
+
+          rm -rf "$dmg_root" "$dmg_path"
+          mkdir -p "$dmg_root"
+          cp -R "${{ steps.bundle.outputs.path }}" "$dmg_root/naite.app"
+          ln -s /Applications "$dmg_root/Applications"
+
+          hdiutil create \
+            -volname "naite" \
+            -srcfolder "$dmg_root" \
+            -ov \
+            -format UDZO \
+            "$dmg_path"
+
+          hdiutil verify "$dmg_path"
+          shasum -a 256 "$dmg_path" > "$checksum_path"
+
+          {
+            echo "dmg=$dmg_path"
+            echo "checksum=$checksum_path"
+            echo "arch=$arch"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Write release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "Versioned naite macOS build."
+            echo
+            echo "Install:"
+            echo "1. Download \`naite-${{ steps.release.outputs.tag }}-macos-${{ steps.package.outputs.arch }}.dmg\`."
+            echo "2. Open the DMG and drag \`naite.app\` to Applications."
+            echo "3. Open \`naite.app\`. This build is ad-hoc signed and not notarized, so macOS may require right-click > Open on first launch."
+            echo
+            echo "Build:"
+            echo "- Version: \`${{ steps.release.outputs.app_version }}\`"
+            echo "- Build: \`${{ steps.release.outputs.build_id }}\`"
+            echo "- Release tag: \`${{ steps.release.outputs.tag }}\`"
+            echo "- Commit: \`${GITHUB_SHA}\`"
+            echo "- Platform: macOS ${{ steps.package.outputs.arch }}"
+            echo "- Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo
+            echo "Verification:"
+            echo "- Release build completed"
+            echo "- Ad-hoc codesign verification passed"
+            echo "- DMG integrity verification passed"
+            echo "- SHA-256 checksum uploaded"
+          } > release-notes.md
+
+      - name: Publish versioned release
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          RELEASE_TITLE: ${{ steps.release.outputs.title }}
+        run: |
+          set -euo pipefail
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "::error::Release $RELEASE_TAG already exists; refusing to overwrite an existing versioned release."
+            exit 1
+          fi
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "::error::Tag $RELEASE_TAG already exists; refusing to overwrite an existing versioned tag."
+            exit 1
+          fi
+
+          git tag "$RELEASE_TAG" "$GITHUB_SHA"
+          git push origin "refs/tags/$RELEASE_TAG"
+
+          gh release create "$RELEASE_TAG" \
+            --target "$GITHUB_SHA" \
+            --title "$RELEASE_TITLE" \
+            --notes-file release-notes.md \
+            --latest
+
+          gh release upload "$RELEASE_TAG" \
+            "${{ steps.package.outputs.dmg }}" \
+            "${{ steps.package.outputs.checksum }}"

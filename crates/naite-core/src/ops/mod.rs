@@ -1,0 +1,15 @@
+pub(crate) mod branch;
+pub(crate) mod checkout;
+pub(crate) mod cherry_pick;
+pub(crate) mod commit;
+pub(crate) mod discard;
+pub(crate) mod fetch;
+pub(crate) mod history;
+pub(crate) mod pull;
+pub(crate) mod push;
+pub(crate) mod release;
+pub(crate) mod reset;
+pub(crate) mod revert;
+pub(crate) mod stage;
+pub(crate) mod stash;
+pub(crate) mod tag;

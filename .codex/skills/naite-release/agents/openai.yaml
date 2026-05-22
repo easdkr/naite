@@ -1,0 +1,4 @@
+interface:
+  display_name: "naite Release"
+  short_description: "Bump version and publish release"
+  default_prompt: "Use $naite-release to bump the naite version and publish a release."

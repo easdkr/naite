@@ -1,0 +1,20 @@
+[package]
+name = "naite-app"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "naite"
+path = "src/main.rs"
+
+[dependencies]
+naite-core = { workspace = true }
+alacritty_terminal = { workspace = true }
+iced = { workspace = true }
+image = { workspace = true }
+portable-pty = { workspace = true }
+rfd = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true }

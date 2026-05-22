@@ -1,0 +1,29 @@
+[workspace]
+members = ["crates/*"]
+resolver = "2"
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+publish = false
+license = "Proprietary"
+
+[workspace.dependencies]
+naite-core = { path = "crates/naite-core" }
+
+iced = { version = "0.13", features = ["tokio", "svg", "canvas", "image"] }
+alacritty_terminal = "0.26"
+gix = { version = "0.66", default-features = false, features = [
+    "max-performance-safe",
+    "revision",
+] }
+portable-pty = "0.9"
+rfd = { version = "0.14", default-features = false, features = ["xdg-portal", "tokio"] }
+thiserror = "1"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+image = "0.24"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
