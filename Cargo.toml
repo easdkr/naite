@@ -12,6 +12,7 @@ license = "Proprietary"
 naite-core = { path = "crates/naite-core" }
 
 iced = { version = "0.13", features = ["tokio", "svg", "canvas", "image"] }
+iced_core = "0.13"
 alacritty_terminal = "0.26"
 gix = { version = "0.66", default-features = false, features = [
     "max-performance-safe",
@@ -27,3 +28,8 @@ image = "0.24"
 [profile.release]
 opt-level = 3
 lto = "thin"
+
+[patch.crates-io]
+iced_core = { path = "vendor/iced_core" }
+iced_widget = { path = "vendor/iced_widget" }
+iced_winit = { path = "vendor/iced_winit" }

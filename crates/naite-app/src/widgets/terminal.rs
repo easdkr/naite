@@ -11,7 +11,9 @@ use naite_core::WorktreeSummary;
 
 use crate::features::terminal::{self, SessionSelection};
 use crate::icons::{self, IconName};
-use crate::state::{TerminalLine, TerminalSession, TerminalState, TerminalStatus};
+use crate::state::{
+    TerminalImePreedit, TerminalLine, TerminalSession, TerminalState, TerminalStatus,
+};
 use crate::styles;
 use crate::theme::{self, color};
 use crate::Message;
@@ -203,12 +205,18 @@ fn terminal_viewport<'a>(session: &'a TerminalSession) -> Element<'a, Message> {
             } else {
                 None
             };
+            let ime_preedit = if cursor_col.is_some() {
+                session.ime_preedit.as_ref()
+            } else {
+                None
+            };
             let selection = terminal_selection_cols(session.selection, row_idx, line);
             lines = lines.push(
                 container(terminal_line_view(
                     line,
                     cursor_col,
                     suggestion_suffix,
+                    ime_preedit,
                     selection,
                 ))
                 .height(Length::Fixed(TERMINAL_LINE_HEIGHT))
@@ -246,6 +254,7 @@ fn terminal_line_view<'a>(
     line: &TerminalLine,
     cursor_col: Option<usize>,
     suggestion_suffix: Option<&str>,
+    ime_preedit: Option<&TerminalImePreedit>,
     selection_cols: Option<(usize, usize)>,
 ) -> Element<'a, Message> {
     let Some(col) = cursor_col else {
@@ -259,25 +268,43 @@ fn terminal_line_view<'a>(
     }
 
     let before: String = chars.iter().take(idx).collect();
-    let cursor_char = chars[idx].to_string();
+    let cursor_char = if ime_preedit.is_some() {
+        " ".to_string()
+    } else {
+        chars[idx].to_string()
+    };
     let mut after: String = chars.iter().skip(idx + 1).collect();
     while after.ends_with(' ') {
         after.pop();
     }
 
     let mut spans = terminal_spans_segment(before.clone(), color::TEXT, selection_cols, 0);
+    let mut preedit_after_cursor = "";
+    if let Some(preedit) = ime_preedit {
+        let (before_cursor, after_cursor) = split_ime_preedit_at_cursor(preedit);
+        if !before_cursor.is_empty() {
+            spans.extend(terminal_spans(before_cursor.to_string(), color::ACCENT));
+        }
+        preedit_after_cursor = after_cursor;
+    }
+
     spans.push(terminal_span(cursor_char, color::BG).background(color::ACCENT));
+
+    if !preedit_after_cursor.is_empty() {
+        spans.extend(terminal_spans(
+            preedit_after_cursor.to_string(),
+            color::ACCENT,
+        ));
+    }
     spans.extend(terminal_spans_segment(
         after.clone(),
         color::TEXT,
         selection_cols,
         before.chars().count() + 1,
     ));
-    if after.is_empty() {
-        if let Some(suffix) = suggestion_suffix {
-            if !suffix.is_empty() {
-                spans.extend(terminal_spans(suffix.to_string(), color::TEXT_SUBTLE));
-            }
+    if after.is_empty() && ime_preedit.is_none() {
+        if let Some(suffix) = suggestion_suffix.filter(|suffix| !suffix.is_empty()) {
+            spans.extend(terminal_spans(suffix.to_string(), color::TEXT_SUBTLE));
         }
     }
 
@@ -285,6 +312,22 @@ fn terminal_line_view<'a>(
         .size(theme::FS_SM)
         .font(theme::font_code())
         .into()
+}
+
+pub(crate) fn split_ime_preedit_at_cursor(preedit: &TerminalImePreedit) -> (&str, &str) {
+    let cursor = preedit
+        .cursor
+        .map(|(_, end)| end)
+        .unwrap_or_else(|| preedit.text.len());
+    let cursor = nearest_char_boundary(&preedit.text, cursor.min(preedit.text.len()));
+    preedit.text.split_at(cursor)
+}
+
+fn nearest_char_boundary(text: &str, mut idx: usize) -> usize {
+    while idx > 0 && !text.is_char_boundary(idx) {
+        idx -= 1;
+    }
+    idx
 }
 
 fn plain_terminal_line<'a>(line: String) -> Element<'a, Message> {

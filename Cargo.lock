@@ -2279,8 +2279,6 @@ dependencies = [
 [[package]]
 name = "iced_core"
 version = "0.13.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0013a238275494641bf8f1732a23a808196540dc67b22ff97099c044ae4c8a1c"
 dependencies = [
  "bitflags 2.11.1",
  "bytes",
@@ -2415,8 +2413,6 @@ dependencies = [
 [[package]]
 name = "iced_widget"
 version = "0.13.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "81429e1b950b0e4bca65be4c4278fea6678ea782030a411778f26fa9f8983e1d"
 dependencies = [
  "iced_renderer",
  "iced_runtime",
@@ -2430,8 +2426,6 @@ dependencies = [
 [[package]]
 name = "iced_winit"
 version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f44cd4e1c594b6334f409282937bf972ba14d31fedf03c23aa595d982a2fda28"
 dependencies = [
  "iced_futures",
  "iced_graphics",
@@ -3065,6 +3059,7 @@ version = "0.0.1"
 dependencies = [
  "alacritty_terminal",
  "iced",
+ "iced_core",
  "image",
  "naite-core",
  "portable-pty",

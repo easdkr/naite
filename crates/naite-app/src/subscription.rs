@@ -60,6 +60,7 @@ pub(crate) fn terminal_app_event(
     _window: window::Id,
 ) -> Option<Message> {
     match event {
+        Event::Ime(ime) => Some(Message::from(terminal_ime_event(ime))),
         Event::Keyboard(keyboard::Event::KeyPressed {
             key,
             modified_key,
@@ -72,17 +73,48 @@ pub(crate) fn terminal_app_event(
                 return Some(message);
             }
             if matches!(status, event::Status::Captured) {
+                if modifiers.command() {
+                    if let Some(message) = terminal_key_input(
+                        key.clone(),
+                        modified_key,
+                        physical_key,
+                        modifiers,
+                        text.as_deref(),
+                    ) {
+                        return Some(Message::from(message));
+                    }
+                }
                 return keyboard_shortcut(key, physical_key, modifiers, status);
             }
             terminal_key_input(key, modified_key, physical_key, modifiers, text.as_deref())
                 .map(Message::from)
         }
+        Event::Keyboard(keyboard::Event::KeyReleased { key, modifiers, .. }) => {
+            Some(Message::from(terminal::Message::KeyReleased {
+                key,
+                modifiers,
+            }))
+        }
+        Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => Some(Message::from(
+            terminal::Message::ModifiersChanged(modifiers),
+        )),
         Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
             Some(Message::CursorMoved(position))
         }
         Event::Window(window::Event::Focused) => Some(Message::WindowFocused),
         _ => None,
     }
+}
+
+fn terminal_ime_event(ime: iced_core::event::Ime) -> terminal::Message {
+    terminal::Message::Ime(match ime {
+        iced_core::event::Ime::Enabled => terminal::TerminalIme::Enabled,
+        iced_core::event::Ime::Preedit(text, cursor) => {
+            terminal::TerminalIme::Preedit { text, cursor }
+        }
+        iced_core::event::Ime::Commit(text) => terminal::TerminalIme::Commit(text),
+        iced_core::event::Ime::Disabled => terminal::TerminalIme::Disabled,
+    })
 }
 
 fn rebase_app_event(event: Event, status: event::Status, _window: window::Id) -> Option<Message> {
@@ -387,8 +419,14 @@ fn terminal_key_input(
     }
 
     if modifiers.command() {
-        return command_bytes(&key, physical_key)
-            .map(|bytes| terminal::Message::Input(terminal::TerminalInput::Bytes(bytes)));
+        if let Some(bytes) = command_bytes(&key, physical_key) {
+            return Some(terminal::Message::Input(terminal::TerminalInput::Bytes(
+                bytes,
+            )));
+        }
+        return compatibility_jamo_preedit(text, &modified_key, &key)
+            .map(terminal::TerminalIme::FallbackPreedit)
+            .map(terminal::Message::Ime);
     }
 
     let bytes = if modifiers.control() {
@@ -409,6 +447,11 @@ fn terminal_key_input(
             Key::Named(Named::PageDown) => b"\x1b[6~".to_vec(),
             Key::Named(Named::Delete) => b"\x1b[3~".to_vec(),
             _ => {
+                if let Some(preedit) = compatibility_jamo_preedit(text, &modified_key, &key) {
+                    return Some(terminal::Message::Ime(
+                        terminal::TerminalIme::FallbackPreedit(preedit),
+                    ));
+                }
                 let text = terminal_text_input(text, &modified_key, &key)?;
                 if modifiers.alt() {
                     let mut bytes = Vec::with_capacity(text.len() + 1);
@@ -440,21 +483,48 @@ fn terminal_key_input(
 }
 
 fn terminal_text_input(text: Option<&str>, modified_key: &Key, key: &Key) -> Option<String> {
-    text.filter(|value| is_printable_text(value))
+    text.filter(|value| is_printable_text(value) && !is_hangul_compatibility_text(value))
         .map(str::to_string)
         .or_else(|| key_text(modified_key))
         .or_else(|| key_text(key))
 }
 
+fn compatibility_jamo_preedit(text: Option<&str>, modified_key: &Key, key: &Key) -> Option<String> {
+    if let Some(value) = text {
+        return is_hangul_compatibility_text(value).then(|| value.to_string());
+    }
+
+    if key_text(modified_key).is_some() {
+        return None;
+    }
+
+    key_compatibility_jamo(key)
+}
+
+fn key_compatibility_jamo(key: &Key) -> Option<String> {
+    match key.as_ref() {
+        Key::Character(value) if is_hangul_compatibility_text(value) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
 fn key_text(key: &Key) -> Option<String> {
     match key.as_ref() {
-        Key::Character(value) if is_printable_text(value) => Some(value.to_string()),
+        Key::Character(value)
+            if is_printable_text(value) && !is_hangul_compatibility_text(value) =>
+        {
+            Some(value.to_string())
+        }
         _ => None,
     }
 }
 
 fn is_printable_text(value: &str) -> bool {
     !value.is_empty() && value.chars().all(|ch| !ch.is_control())
+}
+
+fn is_hangul_compatibility_text(value: &str) -> bool {
+    value.chars().all(naite_core::is_hangul_compatibility_jamo)
 }
 
 fn control_bytes(key: &Key, physical_key: Physical) -> Option<Vec<u8>> {

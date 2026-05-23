@@ -19,7 +19,6 @@ use naite_core::{
 };
 
 use crate::features::commit::CommitOutcome;
-use crate::features::terminal::update::terminal_text_input_bytes;
 use crate::features::{
     branch_create, branch_manage, checkout, command_palette, commit as commit_feature, discard,
     fetch, history, pull, push, rebase, release_prep, repo_open, stage, stash, tag as tag_feature,
@@ -30,8 +29,8 @@ use crate::state::{
     BranchCreateBase, BranchCreateState, BranchManageRenameState, CommandPaletteState,
     CommitFormState, DiffViewMode, OperationState, ReleasePrepPhase, ReleasePrepState,
     RepositoryState, SelectionState, SidebarClickState, SidebarSection, StashBranchState,
-    TagNameMode, TerminalCell, TerminalGridPoint, TerminalScreen, TerminalSelection,
-    TerminalStatus, TransientStatus, UndoCheckpoint,
+    TagNameMode, TerminalCell, TerminalGridPoint, TerminalImeDeleteAction, TerminalImePreedit,
+    TerminalScreen, TerminalSelection, TerminalStatus, TransientStatus, UndoCheckpoint,
 };
 use crate::subscription::{app_event, keyboard_shortcut, terminal_app_event};
 use crate::{
@@ -6934,7 +6933,53 @@ fn terminal_keyboard_capture_composes_decomposed_hangul_text() {
 }
 
 #[test]
-fn terminal_text_input_replaces_compatibility_jamo_with_composed_hangul() {
+fn terminal_keyboard_capture_keeps_compatibility_jamo_as_preedit_fallback() {
+    let message = terminal_app_event(
+        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: Key::Character("ㅎ".into()),
+            modified_key: Key::Character("ㅎ".into()),
+            physical_key: Physical::Code(Code::KeyG),
+            location: iced::keyboard::Location::Standard,
+            modifiers: Modifiers::default(),
+            text: Some("ㅎ".into()),
+        }),
+        event::Status::Ignored,
+        window::Id::unique(),
+    );
+
+    assert!(matches!(
+        message,
+        Some(Message::Terminal(terminal::Message::Ime(
+            terminal::TerminalIme::FallbackPreedit(text)
+        ))) if text == "ㅎ"
+    ));
+}
+
+#[test]
+fn terminal_keyboard_capture_keeps_korean_preedit_after_stale_command_modifier() {
+    let message = terminal_app_event(
+        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: Key::Character("ㅎ".into()),
+            modified_key: Key::Character("ㅎ".into()),
+            physical_key: Physical::Code(Code::KeyG),
+            location: iced::keyboard::Location::Standard,
+            modifiers: Modifiers::COMMAND,
+            text: Some("ㅎ".into()),
+        }),
+        event::Status::Ignored,
+        window::Id::unique(),
+    );
+
+    assert!(matches!(
+        message,
+        Some(Message::Terminal(terminal::Message::Ime(
+            terminal::TerminalIme::FallbackPreedit(text)
+        ))) if text == "ㅎ"
+    ));
+}
+
+#[test]
+fn terminal_ime_commit_writes_finalized_text_without_manual_jamo_patching() {
     let mut app = App::default();
     let id = app.terminal.create_session(
         terminal::TerminalTarget::new(PathBuf::from("/tmp/naite"), None, None),
@@ -6943,24 +6988,45 @@ fn terminal_text_input_replaces_compatibility_jamo_with_composed_hangul() {
         100,
         24,
     );
-    let session = app.terminal.session_mut(id).unwrap();
+    app.terminal.open = true;
+    app.terminal.active = Some(id);
+
+    let _ = app.update(Message::from(terminal::Message::Ime(
+        terminal::TerminalIme::Preedit {
+            text: "하".into(),
+            cursor: Some((3, 3)),
+        },
+    )));
 
     assert_eq!(
-        terminal_text_input_bytes(session, "ㅎ".into()),
-        "ㅎ".as_bytes()
+        app.terminal
+            .session(id)
+            .and_then(|session| session.ime_preedit.as_ref())
+            .map(|preedit| preedit.text.as_str()),
+        Some("하")
     );
 
-    let mut ha = vec![0x7f];
-    ha.extend("하".as_bytes());
-    assert_eq!(terminal_text_input_bytes(session, "ㅏ".into()), ha);
+    let _ = app.update(Message::from(terminal::Message::Ime(
+        terminal::TerminalIme::Commit("하이".into()),
+    )));
 
-    let mut hang = vec![0x7f];
-    hang.extend("항".as_bytes());
-    assert_eq!(terminal_text_input_bytes(session, "ㅇ".into()), hang);
+    assert!(app
+        .terminal
+        .session(id)
+        .is_some_and(|session| session.ime_preedit.is_none()));
+}
 
-    let mut hi = vec![0x7f];
-    hi.extend("하이".as_bytes());
-    assert_eq!(terminal_text_input_bytes(session, "ㅣ".into()), hi);
+#[test]
+fn terminal_ime_preedit_cursor_splits_after_composed_text() {
+    let preedit = TerminalImePreedit {
+        text: "안".into(),
+        cursor: Some((3, 3)),
+    };
+
+    assert_eq!(
+        crate::widgets::terminal_split_ime_preedit_at_cursor(&preedit),
+        ("안", "")
+    );
 }
 
 #[test]
@@ -7044,6 +7110,259 @@ fn terminal_keyboard_capture_maps_command_backspace_to_kill_line() {
             terminal::TerminalInput::Bytes(bytes)
         ))) if bytes == vec![0x15]
     ));
+}
+
+#[test]
+fn terminal_keyboard_capture_maps_captured_command_backspace_to_kill_line() {
+    let message = terminal_app_event(
+        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: Key::Named(Named::Backspace),
+            modified_key: Key::Named(Named::Backspace),
+            physical_key: Physical::Code(Code::Backspace),
+            location: iced::keyboard::Location::Standard,
+            modifiers: Modifiers::COMMAND,
+            text: None,
+        }),
+        event::Status::Captured,
+        window::Id::unique(),
+    );
+
+    assert!(matches!(
+        message,
+        Some(Message::Terminal(terminal::Message::Input(
+            terminal::TerminalInput::Bytes(bytes)
+        ))) if bytes == vec![0x15]
+    ));
+}
+
+#[test]
+fn terminal_ime_command_backspace_clears_preedit_and_kills_line_immediately() {
+    let mut app = App::default();
+    let id = app.terminal.create_session(
+        terminal::TerminalTarget::new(PathBuf::from("/tmp/naite"), None, None),
+        "main".into(),
+        "/bin/zsh".into(),
+        100,
+        24,
+    );
+    app.terminal.open = true;
+    app.terminal.active = Some(id);
+
+    let _ = app.update(Message::from(terminal::Message::ModifiersChanged(
+        Modifiers::COMMAND,
+    )));
+    let _ = app.update(Message::from(terminal::Message::Ime(
+        terminal::TerminalIme::Preedit {
+            text: "안".into(),
+            cursor: Some((3, 3)),
+        },
+    )));
+    let _ = app.update(Message::from(terminal::Message::Ime(
+        terminal::TerminalIme::Preedit {
+            text: String::new(),
+            cursor: None,
+        },
+    )));
+
+    assert!(app.terminal.session(id).is_some_and(|session| {
+        session.ime_preedit.is_none() && session.ime_modified_delete_pending.is_none()
+    }));
+    assert!(matches!(
+        app.operation.error.as_deref(),
+        Some(message) if message.starts_with("terminal runtime")
+    ));
+
+    app.operation.error = None;
+    let _ = app.update(Message::from(terminal::Message::Ime(
+        terminal::TerminalIme::Commit("안".into()),
+    )));
+    assert!(app.operation.error.is_none());
+    assert!(app.terminal.session(id).is_some_and(|session| {
+        session.ime_preedit.is_none()
+            && session.ime_modified_delete_pending.is_none()
+            && session.ime_suppressed_commit.is_none()
+    }));
+
+    let _ = app.update(Message::from(terminal::Message::KeyReleased {
+        key: Key::Named(Named::Backspace),
+        modifiers: Modifiers::COMMAND,
+    }));
+
+    assert!(app.terminal.session(id).is_some_and(|session| {
+        session.ime_preedit.is_none() && session.ime_modified_delete_pending.is_none()
+    }));
+    assert!(app.operation.error.is_none());
+}
+
+#[test]
+fn terminal_ime_command_backspace_release_handles_command_release_order() {
+    let mut app = App::default();
+    let id = app.terminal.create_session(
+        terminal::TerminalTarget::new(PathBuf::from("/tmp/naite"), None, None),
+        "main".into(),
+        "/bin/zsh".into(),
+        100,
+        24,
+    );
+    app.terminal.open = true;
+    app.terminal.active = Some(id);
+
+    let _ = app.update(Message::from(terminal::Message::Ime(
+        terminal::TerminalIme::Preedit {
+            text: "안".into(),
+            cursor: Some((3, 3)),
+        },
+    )));
+    let _ = app.update(Message::from(terminal::Message::ModifiersChanged(
+        Modifiers::COMMAND,
+    )));
+    let _ = app.update(Message::from(terminal::Message::Ime(
+        terminal::TerminalIme::Preedit {
+            text: String::new(),
+            cursor: None,
+        },
+    )));
+    let _ = app.update(Message::from(terminal::Message::ModifiersChanged(
+        Modifiers::default(),
+    )));
+
+    assert!(app.terminal.session(id).is_some_and(|session| {
+        session.ime_preedit.is_none() && session.ime_modified_delete_pending.is_none()
+    }));
+    assert!(matches!(
+        app.operation.error.as_deref(),
+        Some(message) if message.starts_with("terminal runtime")
+    ));
+
+    let _ = app.update(Message::from(terminal::Message::KeyReleased {
+        key: Key::Named(Named::Backspace),
+        modifiers: Modifiers::default(),
+    }));
+
+    assert!(app.terminal.session(id).is_some_and(|session| {
+        session.ime_preedit.is_none() && session.ime_modified_delete_pending.is_none()
+    }));
+    assert!(matches!(
+        app.terminal
+            .session(id)
+            .and_then(|session| session.ime_suppressed_commit.as_deref()),
+        Some("안")
+    ));
+
+    app.operation.error = None;
+    let _ = app.update(Message::from(terminal::Message::Ime(
+        terminal::TerminalIme::Commit("안".into()),
+    )));
+    assert!(app.operation.error.is_none());
+    assert!(app.terminal.session(id).is_some_and(|session| {
+        session.ime_preedit.is_none()
+            && session.ime_modified_delete_pending.is_none()
+            && session.ime_suppressed_commit.is_none()
+    }));
+}
+
+#[test]
+fn terminal_ime_command_backspace_disabled_suppresses_late_commit() {
+    let mut app = App::default();
+    let id = app.terminal.create_session(
+        terminal::TerminalTarget::new(PathBuf::from("/tmp/naite"), None, None),
+        "main".into(),
+        "/bin/zsh".into(),
+        100,
+        24,
+    );
+    app.terminal.open = true;
+    app.terminal.active = Some(id);
+
+    let _ = app.update(Message::from(terminal::Message::ModifiersChanged(
+        Modifiers::COMMAND,
+    )));
+    let _ = app.update(Message::from(terminal::Message::Ime(
+        terminal::TerminalIme::Preedit {
+            text: "안".into(),
+            cursor: Some((3, 3)),
+        },
+    )));
+    let _ = app.update(Message::from(terminal::Message::Ime(
+        terminal::TerminalIme::Disabled,
+    )));
+
+    assert!(matches!(
+        app.operation.error.as_deref(),
+        Some(message) if message.starts_with("terminal runtime")
+    ));
+    assert!(matches!(
+        app.terminal
+            .session(id)
+            .and_then(|session| session.ime_suppressed_commit.as_deref()),
+        Some("안")
+    ));
+
+    app.operation.error = None;
+    let _ = app.update(Message::from(terminal::Message::Ime(
+        terminal::TerminalIme::Commit("안".into()),
+    )));
+    assert!(app.operation.error.is_none());
+    assert!(app.terminal.session(id).is_some_and(|session| {
+        session.ime_preedit.is_none()
+            && session.ime_modified_delete_pending.is_none()
+            && session.ime_suppressed_commit.is_none()
+    }));
+}
+
+#[test]
+fn terminal_ime_option_backspace_clears_preedit_and_kills_word_immediately() {
+    let mut app = App::default();
+    let id = app.terminal.create_session(
+        terminal::TerminalTarget::new(PathBuf::from("/tmp/naite"), None, None),
+        "main".into(),
+        "/bin/zsh".into(),
+        100,
+        24,
+    );
+    app.terminal.open = true;
+    app.terminal.active = Some(id);
+
+    let _ = app.update(Message::from(terminal::Message::ModifiersChanged(
+        Modifiers::ALT,
+    )));
+    let _ = app.update(Message::from(terminal::Message::Ime(
+        terminal::TerminalIme::Preedit {
+            text: "안".into(),
+            cursor: Some((3, 3)),
+        },
+    )));
+
+    assert!(app.terminal.session(id).is_some_and(|session| {
+        session.ime_preedit.is_some()
+            && session.ime_modified_delete_pending == Some(TerminalImeDeleteAction::KillWord)
+    }));
+
+    let _ = app.update(Message::from(terminal::Message::Ime(
+        terminal::TerminalIme::Preedit {
+            text: String::new(),
+            cursor: None,
+        },
+    )));
+
+    assert!(app.terminal.session(id).is_some_and(|session| {
+        session.ime_preedit.is_none() && session.ime_modified_delete_pending.is_none()
+    }));
+    assert!(matches!(
+        app.operation.error.as_deref(),
+        Some(message) if message.starts_with("terminal runtime")
+    ));
+
+    app.operation.error = None;
+    let _ = app.update(Message::from(terminal::Message::Ime(
+        terminal::TerminalIme::Commit("안".into()),
+    )));
+    assert!(app.operation.error.is_none());
+    assert!(app.terminal.session(id).is_some_and(|session| {
+        session.ime_preedit.is_none()
+            && session.ime_modified_delete_pending.is_none()
+            && session.ime_suppressed_commit.is_none()
+    }));
 }
 
 #[test]
