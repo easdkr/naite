@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use iced::Point;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TerminalSessionId(pub u64);
 
@@ -54,6 +56,11 @@ pub enum Message {
     CloseRequested,
     CloseSession(TerminalSessionId),
     ToggleMinimized,
+    PointerMoved(Point),
+    SelectionStarted,
+    SelectionEnded,
+    CopySelectionRequested,
+    PasteRequested,
     Input(TerminalInput),
     RuntimeReady,
     RuntimeEvent(TerminalEvent),

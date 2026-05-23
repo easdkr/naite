@@ -4,9 +4,9 @@ use std::path::Path;
 
 use iced::widget::text::Span;
 use iced::widget::{
-    button, column, container, rich_text, row, scrollable, text, text::Wrapping, Space,
+    button, column, container, mouse_area, rich_text, row, scrollable, text, text::Wrapping, Space,
 };
-use iced::{Alignment, Element, Length, Padding};
+use iced::{mouse, Alignment, Element, Length, Padding};
 use naite_core::WorktreeSummary;
 
 use crate::features::terminal::{self, SessionSelection};
@@ -23,6 +23,10 @@ pub const TERMINAL_PANEL_HEIGHT_MINIMIZED: f32 = 96.0;
 /// Approximate vertical room consumed by the panel chrome (header + tab strip
 /// + paddings). Used by the dimension calculation to derive shell row count.
 pub const TERMINAL_PANEL_CHROME: f32 = 110.0;
+/// Approximate monospace cell width used for terminal hit-testing.
+pub const TERMINAL_CHAR_WIDTH: f32 = 7.6;
+/// Fixed terminal row height used by rendering and mouse hit-testing.
+pub const TERMINAL_LINE_HEIGHT: f32 = 15.0;
 
 const PATH_LABEL_MAX_CHARS: usize = 64;
 const TAB_LABEL_MAX_CHARS: usize = 18;
@@ -199,7 +203,17 @@ fn terminal_viewport<'a>(session: &'a TerminalSession) -> Element<'a, Message> {
             } else {
                 None
             };
-            lines = lines.push(terminal_line_view(line, cursor_col, suggestion_suffix));
+            let selection = terminal_selection_cols(session.selection, row_idx, line);
+            lines = lines.push(
+                container(terminal_line_view(
+                    line,
+                    cursor_col,
+                    suggestion_suffix,
+                    selection,
+                ))
+                .height(Length::Fixed(TERMINAL_LINE_HEIGHT))
+                .width(Length::Fill),
+            );
         }
         if let Some(error) = &session.error {
             lines = lines.push(plain_terminal_line(format!("[error] {error}")));
@@ -207,13 +221,19 @@ fn terminal_viewport<'a>(session: &'a TerminalSession) -> Element<'a, Message> {
         lines.into()
     };
 
+    let scrollable_body = scrollable(body)
+        .direction(styles::thin_scrollbar_dir())
+        .anchor_bottom()
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(styles::thin_scrollbar);
+
     container(
-        scrollable(body)
-            .direction(styles::thin_scrollbar_dir())
-            .anchor_bottom()
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .style(styles::thin_scrollbar),
+        mouse_area(scrollable_body)
+            .on_move(|point| Message::from(terminal::Message::PointerMoved(point)))
+            .on_press(Message::from(terminal::Message::SelectionStarted))
+            .on_release(Message::from(terminal::Message::SelectionEnded))
+            .interaction(mouse::Interaction::Text),
     )
     .width(Length::Fill)
     .height(Length::Fill)
@@ -226,9 +246,10 @@ fn terminal_line_view<'a>(
     line: &TerminalLine,
     cursor_col: Option<usize>,
     suggestion_suffix: Option<&str>,
+    selection_cols: Option<(usize, usize)>,
 ) -> Element<'a, Message> {
     let Some(col) = cursor_col else {
-        return terminal_rich_line(line.text());
+        return terminal_rich_line(line.text(), selection_cols);
     };
 
     let mut chars = line.visible_chars();
@@ -244,9 +265,14 @@ fn terminal_line_view<'a>(
         after.pop();
     }
 
-    let mut spans = terminal_spans(before, color::TEXT);
+    let mut spans = terminal_spans_segment(before.clone(), color::TEXT, selection_cols, 0);
     spans.push(terminal_span(cursor_char, color::BG).background(color::ACCENT));
-    spans.extend(terminal_spans(after.clone(), color::TEXT));
+    spans.extend(terminal_spans_segment(
+        after.clone(),
+        color::TEXT,
+        selection_cols,
+        before.chars().count() + 1,
+    ));
     if after.is_empty() {
         if let Some(suffix) = suggestion_suffix {
             if !suffix.is_empty() {
@@ -262,48 +288,68 @@ fn terminal_line_view<'a>(
 }
 
 fn plain_terminal_line<'a>(line: String) -> Element<'a, Message> {
-    terminal_rich_line(line)
+    terminal_rich_line(line, None)
 }
 
-fn terminal_rich_line<'a>(line: String) -> Element<'a, Message> {
+fn terminal_rich_line<'a>(
+    line: String,
+    selection_cols: Option<(usize, usize)>,
+) -> Element<'a, Message> {
     let line = if line.is_empty() {
         " ".to_string()
     } else {
         line
     };
-    rich_text(terminal_spans(line, color::TEXT))
+    rich_text(terminal_spans_segment(line, color::TEXT, selection_cols, 0))
         .size(theme::FS_SM)
         .font(theme::font_code())
         .into()
 }
 
 fn terminal_spans(text: String, color: iced::Color) -> Vec<Span<'static, Message>> {
+    terminal_spans_segment(text, color, None, 0)
+}
+
+fn terminal_spans_segment(
+    text: String,
+    color: iced::Color,
+    selection_cols: Option<(usize, usize)>,
+    start_col: usize,
+) -> Vec<Span<'static, Message>> {
     let mut spans = Vec::new();
     let mut current = String::new();
     let mut current_fallback = None;
+    let mut current_selected = None;
 
-    for ch in text.chars() {
+    for (idx, ch) in text.chars().enumerate() {
         let fallback = uses_ui_font_fallback(ch);
-        if current_fallback == Some(fallback) {
+        let selected = selection_cols.is_some_and(|(start, end)| {
+            let col = start_col + idx;
+            col >= start && col < end
+        });
+        if current_fallback == Some(fallback) && current_selected == Some(selected) {
             current.push(ch);
             continue;
         }
         if !current.is_empty() {
-            spans.push(terminal_span_with_fallback(
+            spans.push(terminal_span_with_fallback_and_background(
                 std::mem::take(&mut current),
                 color,
                 current_fallback.unwrap_or(false),
+                current_selected.unwrap_or(false),
             ));
         }
         current.push(ch);
         current_fallback = Some(fallback);
+        current_selected = Some(selected);
     }
 
     if !current.is_empty() {
-        spans.push(terminal_span_with_fallback(
+        spans.push(terminal_span_with_fallback_and_background(
             current,
             color,
             current_fallback.unwrap_or(false),
+            current_selected.unwrap_or(false),
         ));
     }
 
@@ -320,12 +366,45 @@ fn terminal_span_with_fallback(
     color: iced::Color,
     fallback: bool,
 ) -> Span<'static, Message> {
-    let span = Span::new(text).color(color);
+    terminal_span_with_fallback_and_background(text, color, fallback, false)
+}
+
+fn terminal_span_with_fallback_and_background(
+    text: String,
+    color: iced::Color,
+    fallback: bool,
+    selected: bool,
+) -> Span<'static, Message> {
+    let mut span = Span::new(text).color(color);
+    if selected {
+        span = span.background(crate::theme::color::with_alpha(
+            crate::theme::color::ACCENT,
+            0.45,
+        ));
+    }
     if fallback {
         span.font(theme::font_regular())
     } else {
         span
     }
+}
+
+fn terminal_selection_cols(
+    selection: Option<crate::state::TerminalSelection>,
+    row: usize,
+    line: &TerminalLine,
+) -> Option<(usize, usize)> {
+    let selection = selection?;
+    let (start, end) = selection.normalized();
+    if row < start.row || row > end.row || start == end {
+        return None;
+    }
+    let line_len = line.text().chars().count();
+    let row_start = if row == start.row { start.col } else { 0 };
+    let row_end = if row == end.row { end.col } else { line_len };
+    let row_start = row_start.min(line_len);
+    let row_end = row_end.min(line_len);
+    (row_start < row_end).then_some((row_start, row_end))
 }
 
 fn uses_ui_font_fallback(ch: char) -> bool {

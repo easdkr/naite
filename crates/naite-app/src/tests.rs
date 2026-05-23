@@ -29,7 +29,8 @@ use crate::state::{
     BranchCreateBase, BranchCreateState, BranchManageRenameState, CommandPaletteState,
     CommitFormState, DiffViewMode, OperationState, ReleasePrepPhase, ReleasePrepState,
     RepositoryState, SelectionState, SidebarClickState, SidebarSection, StashBranchState,
-    TagNameMode, TerminalStatus, TransientStatus, UndoCheckpoint,
+    TagNameMode, TerminalCell, TerminalGridPoint, TerminalScreen, TerminalSelection,
+    TerminalStatus, TransientStatus, UndoCheckpoint,
 };
 use crate::subscription::{app_event, keyboard_shortcut, terminal_app_event};
 use crate::{
@@ -109,6 +110,18 @@ fn worktree_summary(path: &str, branch: &str) -> WorktreeSummary {
         locked: false,
         lock_reason: None,
         is_current: false,
+    }
+}
+
+fn terminal_line(text: &str) -> crate::state::TerminalLine {
+    crate::state::TerminalLine {
+        cells: text
+            .chars()
+            .map(|ch| TerminalCell {
+                ch,
+                ..Default::default()
+            })
+            .collect(),
     }
 }
 
@@ -6798,6 +6811,119 @@ fn terminal_keyboard_capture_keeps_open_terminal_shortcut_available() {
 }
 
 #[test]
+fn terminal_keyboard_capture_keeps_app_command_shortcuts_available() {
+    let palette = terminal_app_event(
+        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: Key::Character("ㅏ".into()),
+            modified_key: Key::Character("ㅏ".into()),
+            physical_key: Physical::Code(Code::KeyK),
+            location: iced::keyboard::Location::Standard,
+            modifiers: Modifiers::COMMAND,
+            text: Some("ㅏ".into()),
+        }),
+        event::Status::Ignored,
+        window::Id::unique(),
+    );
+    let search = terminal_app_event(
+        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: Key::Character("f".into()),
+            modified_key: Key::Character("f".into()),
+            physical_key: Physical::Code(Code::KeyF),
+            location: iced::keyboard::Location::Standard,
+            modifiers: Modifiers::COMMAND,
+            text: Some("f".into()),
+        }),
+        event::Status::Ignored,
+        window::Id::unique(),
+    );
+    let release = terminal_app_event(
+        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: Key::Character("ㄱ".into()),
+            modified_key: Key::Character("ㄱ".into()),
+            physical_key: Physical::Code(Code::KeyR),
+            location: iced::keyboard::Location::Standard,
+            modifiers: Modifiers::COMMAND | Modifiers::SHIFT,
+            text: Some("ㄱ".into()),
+        }),
+        event::Status::Ignored,
+        window::Id::unique(),
+    );
+
+    assert!(matches!(
+        palette,
+        Some(Message::Keyboard(KeyAction::OpenCommandPalette))
+    ));
+    assert!(matches!(
+        search,
+        Some(Message::Keyboard(KeyAction::FocusSearch))
+    ));
+    assert!(matches!(
+        release,
+        Some(Message::Keyboard(KeyAction::ReleasePromotion))
+    ));
+}
+
+#[test]
+fn terminal_keyboard_capture_preserves_control_chords_for_shell() {
+    let message = terminal_app_event(
+        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: Key::Character("ㅏ".into()),
+            modified_key: Key::Character("ㅏ".into()),
+            physical_key: Physical::Code(Code::KeyK),
+            location: iced::keyboard::Location::Standard,
+            modifiers: Modifiers::CTRL,
+            text: Some("ㅏ".into()),
+        }),
+        event::Status::Ignored,
+        window::Id::unique(),
+    );
+
+    assert!(matches!(
+        message,
+        Some(Message::Terminal(terminal::Message::Input(
+            terminal::TerminalInput::Bytes(bytes)
+        ))) if bytes == vec![0x0b]
+    ));
+}
+
+#[test]
+fn terminal_keyboard_capture_keeps_captured_palette_navigation_available() {
+    let down = terminal_app_event(
+        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: Key::Named(Named::ArrowDown),
+            modified_key: Key::Named(Named::ArrowDown),
+            physical_key: Physical::Code(Code::ArrowDown),
+            location: iced::keyboard::Location::Standard,
+            modifiers: Modifiers::default(),
+            text: None,
+        }),
+        event::Status::Captured,
+        window::Id::unique(),
+    );
+    let enter = terminal_app_event(
+        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: Key::Named(Named::Enter),
+            modified_key: Key::Named(Named::Enter),
+            physical_key: Physical::Code(Code::Enter),
+            location: iced::keyboard::Location::Standard,
+            modifiers: Modifiers::default(),
+            text: None,
+        }),
+        event::Status::Captured,
+        window::Id::unique(),
+    );
+
+    assert!(matches!(
+        down,
+        Some(Message::Keyboard(KeyAction::CommandPaletteNext))
+    ));
+    assert!(matches!(
+        enter,
+        Some(Message::Keyboard(KeyAction::CommandPaletteRun))
+    ));
+}
+
+#[test]
 fn terminal_keyboard_capture_sends_control_c_by_physical_key() {
     let message = terminal_app_event(
         iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
@@ -6841,6 +6967,160 @@ fn terminal_keyboard_capture_maps_command_backspace_to_kill_line() {
             terminal::TerminalInput::Bytes(bytes)
         ))) if bytes == vec![0x15]
     ));
+}
+
+#[test]
+fn terminal_keyboard_capture_maps_command_copy_and_paste() {
+    let copy = terminal_app_event(
+        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: Key::Character("c".into()),
+            modified_key: Key::Character("c".into()),
+            physical_key: Physical::Code(Code::KeyC),
+            location: iced::keyboard::Location::Standard,
+            modifiers: Modifiers::COMMAND,
+            text: Some("c".into()),
+        }),
+        event::Status::Ignored,
+        window::Id::unique(),
+    );
+    let paste = terminal_app_event(
+        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: Key::Character("v".into()),
+            modified_key: Key::Character("v".into()),
+            physical_key: Physical::Code(Code::KeyV),
+            location: iced::keyboard::Location::Standard,
+            modifiers: Modifiers::COMMAND,
+            text: Some("v".into()),
+        }),
+        event::Status::Ignored,
+        window::Id::unique(),
+    );
+
+    assert!(matches!(
+        copy,
+        Some(Message::Terminal(terminal::Message::CopySelectionRequested))
+    ));
+    assert!(matches!(
+        paste,
+        Some(Message::Terminal(terminal::Message::PasteRequested))
+    ));
+}
+
+#[test]
+fn terminal_selection_extracts_linear_multiline_text() {
+    let mut app = App::default();
+    let id = app.terminal.create_session(
+        terminal::TerminalTarget::new(PathBuf::from("/tmp/naite"), None, None),
+        "main".into(),
+        "/bin/zsh".into(),
+        80,
+        24,
+    );
+    let session = app.terminal.session_mut(id).unwrap();
+    session.screen = TerminalScreen {
+        cols: 80,
+        rows: 24,
+        lines: vec![
+            terminal_line("alpha beta"),
+            terminal_line("gamma"),
+            terminal_line("delta epsilon"),
+        ],
+        cursor: None,
+        scrollback_len: 0,
+    };
+    session.selection = Some(TerminalSelection {
+        anchor: TerminalGridPoint { row: 0, col: 6 },
+        focus: TerminalGridPoint { row: 2, col: 5 },
+        active: false,
+    });
+
+    assert_eq!(
+        app.terminal
+            .active_session()
+            .unwrap()
+            .selected_text()
+            .as_deref(),
+        Some("beta\ngamma\ndelta")
+    );
+}
+
+#[test]
+fn terminal_drag_selection_uses_terminal_cell_coordinates() {
+    let mut app = App::default();
+    let id = app.terminal.create_session(
+        terminal::TerminalTarget::new(PathBuf::from("/tmp/naite"), None, None),
+        "main".into(),
+        "/bin/zsh".into(),
+        80,
+        24,
+    );
+    app.terminal.session_mut(id).unwrap().screen = TerminalScreen {
+        cols: 80,
+        rows: 24,
+        lines: vec![terminal_line("alpha beta"), terminal_line("gamma")],
+        cursor: None,
+        scrollback_len: 0,
+    };
+
+    let _ = app.update(Message::from(terminal::Message::PointerMoved(
+        iced::Point::new(
+            crate::widgets::TERMINAL_CHAR_WIDTH,
+            crate::widgets::TERMINAL_LINE_HEIGHT * 0.2,
+        ),
+    )));
+    let _ = app.update(Message::from(terminal::Message::SelectionStarted));
+    let _ = app.update(Message::from(terminal::Message::PointerMoved(
+        iced::Point::new(
+            crate::widgets::TERMINAL_CHAR_WIDTH * 5.0,
+            crate::widgets::TERMINAL_LINE_HEIGHT * 0.2,
+        ),
+    )));
+    let _ = app.update(Message::from(terminal::Message::SelectionEnded));
+
+    assert_eq!(
+        app.terminal
+            .active_session()
+            .unwrap()
+            .selected_text()
+            .as_deref(),
+        Some("lpha")
+    );
+}
+
+#[test]
+fn terminal_click_without_drag_clears_existing_selection() {
+    let mut app = App::default();
+    let id = app.terminal.create_session(
+        terminal::TerminalTarget::new(PathBuf::from("/tmp/naite"), None, None),
+        "main".into(),
+        "/bin/zsh".into(),
+        80,
+        24,
+    );
+    let session = app.terminal.session_mut(id).unwrap();
+    session.screen = TerminalScreen {
+        cols: 80,
+        rows: 24,
+        lines: vec![terminal_line("alpha beta")],
+        cursor: None,
+        scrollback_len: 0,
+    };
+    session.selection = Some(TerminalSelection {
+        anchor: TerminalGridPoint { row: 0, col: 0 },
+        focus: TerminalGridPoint { row: 0, col: 5 },
+        active: false,
+    });
+
+    let _ = app.update(Message::from(terminal::Message::PointerMoved(
+        iced::Point::new(
+            crate::widgets::TERMINAL_CHAR_WIDTH * 20.0,
+            crate::widgets::TERMINAL_LINE_HEIGHT * 8.0,
+        ),
+    )));
+    let _ = app.update(Message::from(terminal::Message::SelectionStarted));
+    let _ = app.update(Message::from(terminal::Message::SelectionEnded));
+
+    assert!(app.terminal.active_session().unwrap().selection.is_none());
 }
 
 #[test]

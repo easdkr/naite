@@ -46,7 +46,8 @@ pub use reset_prompt::reset_prompt;
 pub(crate) use sidebar::is_checkout_supported as sidebar_ref_checkout_supported;
 pub use sidebar::{sidebar, SidebarProps};
 pub use terminal::{
-    terminal_panel, TERMINAL_PANEL_CHROME, TERMINAL_PANEL_HEIGHT, TERMINAL_PANEL_HEIGHT_MINIMIZED,
+    terminal_panel, TERMINAL_CHAR_WIDTH, TERMINAL_LINE_HEIGHT, TERMINAL_PANEL_CHROME,
+    TERMINAL_PANEL_HEIGHT, TERMINAL_PANEL_HEIGHT_MINIMIZED,
 };
 pub use toolbar::{toolbar, ToolbarProps};
 pub use workspace::workspace_dashboard;
