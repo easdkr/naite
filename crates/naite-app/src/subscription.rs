@@ -56,7 +56,7 @@ impl App {
 
 pub(crate) fn terminal_app_event(
     event: Event,
-    _status: event::Status,
+    status: event::Status,
     _window: window::Id,
 ) -> Option<Message> {
     match event {
@@ -67,8 +67,11 @@ pub(crate) fn terminal_app_event(
             text,
             ..
         }) => {
-            if terminal_shortcut(&key, physical_key, modifiers) {
-                return Some(Message::Keyboard(KeyAction::OpenTerminal));
+            if let Some(message) = terminal_global_shortcut(&key, physical_key, modifiers) {
+                return Some(message);
+            }
+            if matches!(status, event::Status::Captured) {
+                return keyboard_shortcut(key, physical_key, modifiers, status);
             }
             terminal_key_input(key, physical_key, modifiers, text.as_deref()).map(Message::from)
         }
@@ -297,12 +300,62 @@ fn terminal_shortcut(key: &Key, physical_key: Physical, modifiers: Modifiers) ->
     (modifiers.command() || modifiers.control()) && is_key(key, physical_key, Code::Backquote, "`")
 }
 
+fn terminal_global_shortcut(
+    key: &Key,
+    physical_key: Physical,
+    modifiers: Modifiers,
+) -> Option<Message> {
+    if terminal_shortcut(key, physical_key, modifiers) {
+        return Some(Message::Keyboard(KeyAction::OpenTerminal));
+    }
+
+    if !modifiers.command() {
+        return None;
+    }
+
+    if is_key(key, physical_key, Code::KeyK, "k") && !modifiers.shift() {
+        return Some(Message::Keyboard(KeyAction::OpenCommandPalette));
+    }
+    if is_key(key, physical_key, Code::KeyO, "o") && !modifiers.shift() {
+        return Some(Message::Keyboard(KeyAction::OpenRepository));
+    }
+    if is_key(key, physical_key, Code::KeyF, "f") && !modifiers.shift() {
+        return Some(Message::Keyboard(KeyAction::FocusSearch));
+    }
+    if is_key(key, physical_key, Code::KeyP, "p") && modifiers.shift() {
+        return Some(Message::Keyboard(KeyAction::Push));
+    }
+    if is_key(key, physical_key, Code::KeyR, "r") && modifiers.shift() {
+        return Some(Message::Keyboard(KeyAction::ReleasePromotion));
+    }
+    if is_key(key, physical_key, Code::KeyT, "t") && modifiers.shift() {
+        return Some(Message::Keyboard(KeyAction::CreateAndPushTag));
+    }
+
+    None
+}
+
 fn terminal_key_input(
     key: Key,
     physical_key: Physical,
     modifiers: Modifiers,
     text: Option<&str>,
 ) -> Option<terminal::Message> {
+    if modifiers.command()
+        && !modifiers.alt()
+        && !modifiers.shift()
+        && is_key(&key, physical_key, Code::KeyC, "c")
+    {
+        return Some(terminal::Message::CopySelectionRequested);
+    }
+    if modifiers.command()
+        && !modifiers.alt()
+        && !modifiers.shift()
+        && is_key(&key, physical_key, Code::KeyV, "v")
+    {
+        return Some(terminal::Message::PasteRequested);
+    }
+
     // Suggestion-accept shortcuts. update.rs decides whether to consume the
     // active suggestion or fall through to the standard byte mapping.
     if !modifiers.command() {
@@ -371,12 +424,8 @@ fn terminal_key_input(
 }
 
 fn control_bytes(key: &Key, physical_key: Physical) -> Option<Vec<u8>> {
-    match physical_key {
-        Physical::Code(Code::KeyC) => return Some(vec![0x03]),
-        Physical::Code(Code::KeyD) => return Some(vec![0x04]),
-        Physical::Code(Code::KeyL) => return Some(vec![0x0c]),
-        Physical::Code(Code::KeyZ) => return Some(vec![0x1a]),
-        _ => {}
+    if let Some(byte) = physical_control_byte(physical_key) {
+        return Some(vec![byte]);
     }
 
     match key.as_ref() {
@@ -408,6 +457,42 @@ fn control_bytes(key: &Key, physical_key: Physical) -> Option<Vec<u8>> {
         }
         _ => None,
     }
+}
+
+fn physical_control_byte(physical_key: Physical) -> Option<u8> {
+    let Physical::Code(code) = physical_key else {
+        return None;
+    };
+    let offset = match code {
+        Code::KeyA => 0,
+        Code::KeyB => 1,
+        Code::KeyC => 2,
+        Code::KeyD => 3,
+        Code::KeyE => 4,
+        Code::KeyF => 5,
+        Code::KeyG => 6,
+        Code::KeyH => 7,
+        Code::KeyI => 8,
+        Code::KeyJ => 9,
+        Code::KeyK => 10,
+        Code::KeyL => 11,
+        Code::KeyM => 12,
+        Code::KeyN => 13,
+        Code::KeyO => 14,
+        Code::KeyP => 15,
+        Code::KeyQ => 16,
+        Code::KeyR => 17,
+        Code::KeyS => 18,
+        Code::KeyT => 19,
+        Code::KeyU => 20,
+        Code::KeyV => 21,
+        Code::KeyW => 22,
+        Code::KeyX => 23,
+        Code::KeyY => 24,
+        Code::KeyZ => 25,
+        _ => return None,
+    };
+    Some(offset + 1)
 }
 
 fn command_bytes(key: &Key, physical_key: Physical) -> Option<Vec<u8>> {

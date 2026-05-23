@@ -3,7 +3,10 @@ use iced::Task;
 use crate::features::terminal::{
     self, SessionSelection, TerminalCommand, TerminalEvent, TerminalInput, TerminalTarget,
 };
-use crate::state::{default_terminal_shell, IntegrationStatus, TerminalScreen, TerminalStatus};
+use crate::state::{
+    default_terminal_shell, IntegrationStatus, TerminalGridPoint, TerminalScreen,
+    TerminalSelection, TerminalStatus,
+};
 use crate::{App, Message};
 
 impl App {
@@ -111,6 +114,67 @@ impl App {
                 }
                 Task::none()
             }
+            terminal::Message::PointerMoved(point) => {
+                let Some(id) = self.terminal.active else {
+                    return Task::none();
+                };
+                let focus = {
+                    let Some(session) = self.terminal.session(id) else {
+                        return Task::none();
+                    };
+                    terminal_grid_point_at(session, point)
+                };
+                self.terminal.pointer_grid_position = Some(focus);
+                let Some(session) = self.terminal.session_mut(id) else {
+                    return Task::none();
+                };
+                let Some(selection) = session.selection else {
+                    return Task::none();
+                };
+                if selection.active {
+                    session.selection = Some(TerminalSelection { focus, ..selection });
+                }
+                Task::none()
+            }
+            terminal::Message::SelectionStarted => {
+                let Some(anchor) = self.terminal.pointer_grid_position else {
+                    return Task::none();
+                };
+                let Some(session) = self.terminal.active_session_mut() else {
+                    return Task::none();
+                };
+                session.selection = Some(TerminalSelection {
+                    anchor,
+                    focus: anchor,
+                    active: true,
+                });
+                Task::none()
+            }
+            terminal::Message::SelectionEnded => {
+                if let Some(session) = self.terminal.active_session_mut() {
+                    if let Some(mut selection) = session.selection {
+                        selection.active = false;
+                        session.selection = (!selection.is_empty()).then_some(selection);
+                    }
+                }
+                Task::none()
+            }
+            terminal::Message::CopySelectionRequested => {
+                let Some(text) = self
+                    .terminal
+                    .active_session()
+                    .and_then(|session| session.selected_text())
+                else {
+                    return Task::none();
+                };
+                iced::clipboard::write(text)
+            }
+            terminal::Message::PasteRequested => iced::clipboard::read().map(|contents| {
+                contents
+                    .filter(|text| !text.is_empty())
+                    .map(|text| terminal::Message::Input(TerminalInput::Paste(text)).into())
+                    .unwrap_or(Message::NoOp)
+            }),
             terminal::Message::Input(input) => {
                 let Some(id) = self.terminal.active else {
                     return Task::none();
@@ -428,21 +492,45 @@ impl App {
     fn terminal_dimensions(&self) -> (u16, u16) {
         // Panel spans only the commit-list pane (between sidebar and detail),
         // so columns scale with that pane while rows stay anchored to the
-        // fixed panel envelope. Character metrics are tuned for FS_SM mono.
-        const CHAR_WIDTH: f32 = 7.6;
-        const LINE_HEIGHT: f32 = 15.0;
+        // fixed panel envelope. Character metrics are shared with selection
+        // hit-testing so rendered rows and mouse coordinates stay aligned.
         let sidebar_ratio = self.preferences.sidebar_ratio.clamp(0.14, 0.36);
         let detail_ratio = self.preferences.detail_ratio.clamp(0.50, 0.78);
         let panel_width = self.window_width * (1.0 - sidebar_ratio) * detail_ratio;
         let body_height = (crate::widgets::TERMINAL_PANEL_HEIGHT
             - crate::widgets::TERMINAL_PANEL_CHROME)
             .max(60.0);
-        let cols = ((panel_width - 64.0) / CHAR_WIDTH).clamp(40.0, 240.0) as u16;
-        let rows = (body_height / LINE_HEIGHT).clamp(6.0, 40.0) as u16;
+        let cols =
+            ((panel_width - 64.0) / crate::widgets::TERMINAL_CHAR_WIDTH).clamp(40.0, 240.0) as u16;
+        let rows = (body_height / crate::widgets::TERMINAL_LINE_HEIGHT).clamp(6.0, 40.0) as u16;
         (cols, rows)
     }
 }
 
 fn bracketed_paste(text: String) -> String {
     format!("\x1b[200~{text}\x1b[201~")
+}
+
+fn terminal_grid_point_at(
+    session: &crate::state::TerminalSession,
+    point: iced::Point,
+) -> TerminalGridPoint {
+    let last_row = session.screen.lines.len().saturating_sub(1);
+    let row = (point.y / crate::widgets::TERMINAL_LINE_HEIGHT)
+        .floor()
+        .max(0.0) as usize;
+    let row = row.min(last_row);
+    let line_len = session
+        .screen
+        .lines
+        .get(row)
+        .map(|line| line.text().chars().count())
+        .unwrap_or_default();
+    let col = (point.x / crate::widgets::TERMINAL_CHAR_WIDTH)
+        .floor()
+        .max(0.0) as usize;
+    TerminalGridPoint {
+        row,
+        col: col.min(line_len),
+    }
 }

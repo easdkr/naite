@@ -658,6 +658,7 @@ pub struct TerminalState {
     pub sessions: Vec<TerminalSession>,
     pub active: Option<TerminalSessionId>,
     pub next_session_id: u64,
+    pub pointer_grid_position: Option<TerminalGridPoint>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -684,12 +685,38 @@ pub struct TerminalSession {
     pub last_exit_code: Option<i32>,
     pub shell_history: Vec<String>,
     pub active_suggestion: Option<crate::features::terminal::suggestion::ActiveSuggestion>,
+    pub selection: Option<TerminalSelection>,
 }
 
 #[allow(dead_code)]
 pub const SHELL_HISTORY_CAP: usize = 500;
 
 impl TerminalSession {
+    pub fn selected_text(&self) -> Option<String> {
+        let selection = self.selection?;
+        let (start, end) = selection.normalized();
+        if start == end {
+            return None;
+        }
+
+        let mut selected = Vec::new();
+        for row in start.row..=end.row {
+            let Some(line) = self.screen.lines.get(row) else {
+                continue;
+            };
+            let chars: Vec<char> = line.text().chars().collect();
+            let row_start = if row == start.row { start.col } else { 0 };
+            let row_end = if row == end.row { end.col } else { chars.len() };
+            let row_start = row_start.min(chars.len());
+            let row_end = row_end.min(chars.len());
+            if row_start <= row_end {
+                selected.push(chars[row_start..row_end].iter().collect::<String>());
+            }
+        }
+
+        (!selected.is_empty()).then(|| selected.join("\n"))
+    }
+
     #[allow(dead_code)]
     pub fn push_history_capped(&mut self, entries: Vec<String>) {
         for entry in entries {
@@ -698,6 +725,33 @@ impl TerminalSession {
             }
             self.shell_history.push(entry);
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct TerminalGridPoint {
+    pub row: usize,
+    pub col: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TerminalSelection {
+    pub anchor: TerminalGridPoint,
+    pub focus: TerminalGridPoint,
+    pub active: bool,
+}
+
+impl TerminalSelection {
+    pub fn normalized(&self) -> (TerminalGridPoint, TerminalGridPoint) {
+        if self.anchor <= self.focus {
+            (self.anchor, self.focus)
+        } else {
+            (self.focus, self.anchor)
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.anchor == self.focus
     }
 }
 
@@ -886,6 +940,7 @@ impl TerminalState {
             last_exit_code: None,
             shell_history: Vec::new(),
             active_suggestion: None,
+            selection: None,
         });
         self.active = Some(id);
         id
