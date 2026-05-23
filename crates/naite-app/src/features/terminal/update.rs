@@ -1,11 +1,12 @@
+use iced::keyboard::key::{Key, Named};
 use iced::Task;
 
 use crate::features::terminal::{
     self, SessionSelection, TerminalCommand, TerminalEvent, TerminalInput, TerminalTarget,
 };
 use crate::state::{
-    default_terminal_shell, IntegrationStatus, TerminalGridPoint, TerminalInputComposition,
-    TerminalScreen, TerminalSelection, TerminalSession, TerminalStatus,
+    default_terminal_shell, IntegrationStatus, TerminalGridPoint, TerminalImeDeleteAction,
+    TerminalImePreedit, TerminalScreen, TerminalSelection, TerminalStatus,
 };
 use crate::{App, Message};
 
@@ -182,26 +183,33 @@ impl App {
                 let bytes = match input {
                     TerminalInput::Bytes(bytes) => {
                         if let Some(session) = self.terminal.session_mut(id) {
-                            session.input_composition = None;
+                            session.ime_preedit = None;
+                            session.ime_modified_delete_pending = None;
+                            session.ime_suppressed_commit = None;
                         }
                         bytes
                     }
                     TerminalInput::Text(text) => {
                         if let Some(session) = self.terminal.session_mut(id) {
-                            terminal_text_input_bytes(session, text)
-                        } else {
-                            naite_core::compose_hangul(&text).into_bytes()
+                            session.ime_preedit = None;
+                            session.ime_modified_delete_pending = None;
+                            session.ime_suppressed_commit = None;
                         }
+                        naite_core::compose_hangul(&text).into_bytes()
                     }
                     TerminalInput::Paste(text) => {
                         if let Some(session) = self.terminal.session_mut(id) {
-                            session.input_composition = None;
+                            session.ime_preedit = None;
+                            session.ime_modified_delete_pending = None;
+                            session.ime_suppressed_commit = None;
                         }
                         bracketed_paste(text).into_bytes()
                     }
                     TerminalInput::MaybeAcceptSuggestion { fallback } => {
                         if let Some(session) = self.terminal.session_mut(id) {
-                            session.input_composition = None;
+                            session.ime_preedit = None;
+                            session.ime_modified_delete_pending = None;
+                            session.ime_suppressed_commit = None;
                             if let Some(suggestion) = session.active_suggestion.take() {
                                 session.input_buffer.push_str(&suggestion.suffix);
                                 session.input_cursor = session.input_buffer.chars().count();
@@ -215,6 +223,151 @@ impl App {
                     }
                 };
                 self.send_terminal_command(TerminalCommand::Input { id, bytes });
+                Task::none()
+            }
+            terminal::Message::Ime(event) => {
+                let Some(id) = self.terminal.active else {
+                    return Task::none();
+                };
+                match event {
+                    terminal::TerminalIme::Enabled => Task::none(),
+                    terminal::TerminalIme::FallbackPreedit(text) => {
+                        let modified_delete_action =
+                            terminal_modified_delete_action(self.terminal.modifiers);
+                        if let Some(session) = self.terminal.session_mut(id) {
+                            if session.ime_preedit.is_none() && !text.is_empty() {
+                                session.ime_suppressed_commit = None;
+                                let cursor = text.len();
+                                session.ime_preedit = Some(TerminalImePreedit {
+                                    text,
+                                    cursor: Some((cursor, cursor)),
+                                });
+                                session.ime_modified_delete_pending = modified_delete_action;
+                            }
+                        }
+                        Task::none()
+                    }
+                    terminal::TerminalIme::Preedit { text, cursor } => {
+                        let modified_delete_action =
+                            terminal_modified_delete_action(self.terminal.modifiers);
+                        let mut delete_action = None;
+                        if let Some(session) = self.terminal.session_mut(id) {
+                            if text.is_empty() {
+                                let action =
+                                    modified_delete_action.or(session.ime_modified_delete_pending);
+                                delete_action =
+                                    session.ime_preedit.is_some().then_some(action).flatten();
+                                session.ime_suppressed_commit = delete_action
+                                    .and(session.ime_preedit.as_ref())
+                                    .map(|preedit| preedit.text.clone());
+                                session.ime_preedit = None;
+                                session.ime_modified_delete_pending = None;
+                            } else {
+                                session.ime_suppressed_commit = None;
+                                session.ime_preedit = Some(TerminalImePreedit { text, cursor });
+                                session.ime_modified_delete_pending = modified_delete_action;
+                            }
+                        }
+                        if let Some(action) = delete_action {
+                            self.send_terminal_command(TerminalCommand::Input {
+                                id,
+                                bytes: terminal_ime_delete_bytes(action),
+                            });
+                        }
+                        Task::none()
+                    }
+                    terminal::TerminalIme::Commit(text) => {
+                        if let Some(session) = self.terminal.session_mut(id) {
+                            if commit_matches_suppressed_ime(
+                                &text,
+                                session.ime_suppressed_commit.as_deref(),
+                            ) {
+                                session.ime_preedit = None;
+                                session.ime_modified_delete_pending = None;
+                                session.ime_suppressed_commit = None;
+                                return Task::none();
+                            }
+                            session.ime_preedit = None;
+                            session.ime_modified_delete_pending = None;
+                            session.ime_suppressed_commit = None;
+                        }
+                        self.send_terminal_command(TerminalCommand::Input {
+                            id,
+                            bytes: naite_core::compose_hangul(&text).into_bytes(),
+                        });
+                        Task::none()
+                    }
+                    terminal::TerminalIme::Disabled => {
+                        let modified_delete_action =
+                            terminal_modified_delete_action(self.terminal.modifiers);
+                        let mut delete_action = None;
+                        if let Some(session) = self.terminal.session_mut(id) {
+                            let action =
+                                modified_delete_action.or(session.ime_modified_delete_pending);
+                            delete_action =
+                                session.ime_preedit.is_some().then_some(action).flatten();
+                            session.ime_suppressed_commit = delete_action
+                                .and(session.ime_preedit.as_ref())
+                                .map(|preedit| preedit.text.clone());
+                            session.ime_preedit = None;
+                            session.ime_modified_delete_pending = None;
+                        }
+                        if let Some(action) = delete_action {
+                            self.send_terminal_command(TerminalCommand::Input {
+                                id,
+                                bytes: terminal_ime_delete_bytes(action),
+                            });
+                        }
+                        Task::none()
+                    }
+                }
+            }
+            terminal::Message::KeyReleased { key, modifiers } => {
+                self.terminal.modifiers = modifiers;
+                let Some(id) = self.terminal.active else {
+                    return Task::none();
+                };
+                if let Some(session) = self.terminal.session_mut(id) {
+                    if is_backspace_key(&key) {
+                        let suppressed_preedit = session
+                            .ime_preedit
+                            .as_ref()
+                            .map(|preedit| preedit.text.clone());
+                        let action = session.ime_modified_delete_pending.or_else(|| {
+                            session
+                                .ime_preedit
+                                .is_some()
+                                .then(|| terminal_modified_delete_action(modifiers))
+                                .flatten()
+                        });
+                        session.ime_preedit = None;
+                        session.ime_modified_delete_pending = None;
+                        if let Some(action) = action {
+                            if session.ime_suppressed_commit.is_none() {
+                                session.ime_suppressed_commit = suppressed_preedit;
+                            }
+                            self.send_terminal_command(TerminalCommand::Input {
+                                id,
+                                bytes: terminal_ime_delete_bytes(action),
+                            });
+                        }
+                    } else {
+                        session.ime_modified_delete_pending = None;
+                    }
+                }
+                Task::none()
+            }
+            terminal::Message::ModifiersChanged(modifiers) => {
+                self.terminal.modifiers = modifiers;
+                if let Some(action) = terminal_modified_delete_action(modifiers) {
+                    if let Some(id) = self.terminal.active {
+                        if let Some(session) = self.terminal.session_mut(id) {
+                            if session.ime_preedit.is_some() {
+                                session.ime_modified_delete_pending = Some(action);
+                            }
+                        }
+                    }
+                }
                 Task::none()
             }
             terminal::Message::RuntimeReady => {
@@ -529,25 +682,33 @@ fn bracketed_paste(text: String) -> String {
     format!("\x1b[200~{text}\x1b[201~")
 }
 
-pub(crate) fn terminal_text_input_bytes(session: &mut TerminalSession, text: String) -> Vec<u8> {
-    if !is_composable_hangul_input(&text) {
-        session.input_composition = None;
-        return naite_core::compose_hangul(&text).into_bytes();
-    }
-
-    let previous = session.input_composition.take().unwrap_or_default();
-    let mut raw = previous.raw;
-    raw.push_str(&text);
-    let display = naite_core::compose_hangul(&raw);
-
-    let mut bytes = vec![0x7f; previous.display.chars().count()];
-    bytes.extend(display.as_bytes());
-    session.input_composition = Some(TerminalInputComposition { raw, display });
-    bytes
+fn is_backspace_key(key: &Key) -> bool {
+    matches!(key.as_ref(), Key::Named(Named::Backspace))
 }
 
-fn is_composable_hangul_input(text: &str) -> bool {
-    !text.is_empty() && text.chars().all(naite_core::is_hangul_compatibility_jamo)
+fn terminal_modified_delete_action(
+    modifiers: iced::keyboard::Modifiers,
+) -> Option<TerminalImeDeleteAction> {
+    if modifiers.command() {
+        Some(TerminalImeDeleteAction::KillLine)
+    } else if modifiers.alt() {
+        Some(TerminalImeDeleteAction::KillWord)
+    } else {
+        None
+    }
+}
+
+fn terminal_ime_delete_bytes(action: TerminalImeDeleteAction) -> Vec<u8> {
+    match action {
+        TerminalImeDeleteAction::KillLine => vec![0x15],
+        TerminalImeDeleteAction::KillWord => vec![0x1b, 0x7f],
+    }
+}
+
+fn commit_matches_suppressed_ime(commit: &str, suppressed: Option<&str>) -> bool {
+    suppressed.is_some_and(|suppressed| {
+        naite_core::compose_hangul(commit) == naite_core::compose_hangul(suppressed)
+    })
 }
 
 fn terminal_grid_point_at(

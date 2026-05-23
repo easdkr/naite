@@ -6,6 +6,6 @@ pub(crate) mod update;
 pub(crate) mod zsh_integration;
 
 pub(crate) use message::{
-    Message, SessionSelection, TerminalCommand, TerminalEvent, TerminalInput, TerminalSessionId,
-    TerminalTarget,
+    Message, SessionSelection, TerminalCommand, TerminalEvent, TerminalIme, TerminalInput,
+    TerminalSessionId, TerminalTarget,
 };

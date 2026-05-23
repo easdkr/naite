@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use iced::keyboard::{key::Key, Modifiers};
 use iced::Point;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -62,6 +63,9 @@ pub enum Message {
     CopySelectionRequested,
     PasteRequested,
     Input(TerminalInput),
+    Ime(TerminalIme),
+    KeyReleased { key: Key, modifiers: Modifiers },
+    ModifiersChanged(Modifiers),
     RuntimeReady,
     RuntimeEvent(TerminalEvent),
 }
@@ -72,6 +76,18 @@ pub enum TerminalInput {
     Text(String),
     Paste(String),
     MaybeAcceptSuggestion { fallback: Vec<u8> },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TerminalIme {
+    Enabled,
+    FallbackPreedit(String),
+    Preedit {
+        text: String,
+        cursor: Option<(usize, usize)>,
+    },
+    Commit(String),
+    Disabled,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

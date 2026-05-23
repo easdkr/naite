@@ -2,7 +2,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use iced::Point;
+use iced::{keyboard::Modifiers, Point};
 use naite_core::{
     BlameLine, BranchSyncStatus, CommitDiff, CommitPageCursor, CommitSummary, FileHistoryEntry,
     GitHubIssueFilter, GitHubIssueSummary, GitOperationState, GraphLayout, HighlightedDiff, Hunk,
@@ -659,6 +659,7 @@ pub struct TerminalState {
     pub active: Option<TerminalSessionId>,
     pub next_session_id: u64,
     pub pointer_grid_position: Option<TerminalGridPoint>,
+    pub modifiers: Modifiers,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -686,13 +687,21 @@ pub struct TerminalSession {
     pub shell_history: Vec<String>,
     pub active_suggestion: Option<crate::features::terminal::suggestion::ActiveSuggestion>,
     pub selection: Option<TerminalSelection>,
-    pub input_composition: Option<TerminalInputComposition>,
+    pub ime_preedit: Option<TerminalImePreedit>,
+    pub ime_modified_delete_pending: Option<TerminalImeDeleteAction>,
+    pub ime_suppressed_commit: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct TerminalInputComposition {
-    pub raw: String,
-    pub display: String,
+pub struct TerminalImePreedit {
+    pub text: String,
+    pub cursor: Option<(usize, usize)>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminalImeDeleteAction {
+    KillLine,
+    KillWord,
 }
 
 #[allow(dead_code)]
@@ -948,7 +957,9 @@ impl TerminalState {
             shell_history: Vec::new(),
             active_suggestion: None,
             selection: None,
-            input_composition: None,
+            ime_preedit: None,
+            ime_modified_delete_pending: None,
+            ime_suppressed_commit: None,
         });
         self.active = Some(id);
         id
