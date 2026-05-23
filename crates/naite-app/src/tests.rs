@@ -19,6 +19,7 @@ use naite_core::{
 };
 
 use crate::features::commit::CommitOutcome;
+use crate::features::terminal::update::terminal_text_input_bytes;
 use crate::features::{
     branch_create, branch_manage, checkout, command_palette, commit as commit_feature, discard,
     fetch, history, pull, push, rebase, release_prep, repo_open, stage, stash, tag as tag_feature,
@@ -6884,6 +6885,82 @@ fn terminal_keyboard_capture_preserves_control_chords_for_shell() {
             terminal::TerminalInput::Bytes(bytes)
         ))) if bytes == vec![0x0b]
     ));
+}
+
+#[test]
+fn terminal_keyboard_capture_sends_korean_text_when_event_text_is_missing() {
+    let message = terminal_app_event(
+        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: Key::Character("ㅎ".into()),
+            modified_key: Key::Character("한".into()),
+            physical_key: Physical::Code(Code::KeyG),
+            location: iced::keyboard::Location::Standard,
+            modifiers: Modifiers::default(),
+            text: None,
+        }),
+        event::Status::Ignored,
+        window::Id::unique(),
+    );
+
+    assert!(matches!(
+        message,
+        Some(Message::Terminal(terminal::Message::Input(
+            terminal::TerminalInput::Text(text)
+        ))) if text == "한"
+    ));
+}
+
+#[test]
+fn terminal_keyboard_capture_composes_decomposed_hangul_text() {
+    let message = terminal_app_event(
+        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: Key::Character("ㄱ".into()),
+            modified_key: Key::Character("ㄱ".into()),
+            physical_key: Physical::Code(Code::KeyR),
+            location: iced::keyboard::Location::Standard,
+            modifiers: Modifiers::default(),
+            text: Some("\u{1100}\u{1161}".into()),
+        }),
+        event::Status::Ignored,
+        window::Id::unique(),
+    );
+
+    assert!(matches!(
+        message,
+        Some(Message::Terminal(terminal::Message::Input(
+            terminal::TerminalInput::Text(text)
+        ))) if text == "\u{1100}\u{1161}"
+    ));
+}
+
+#[test]
+fn terminal_text_input_replaces_compatibility_jamo_with_composed_hangul() {
+    let mut app = App::default();
+    let id = app.terminal.create_session(
+        terminal::TerminalTarget::new(PathBuf::from("/tmp/naite"), None, None),
+        "main".into(),
+        "/bin/zsh".into(),
+        100,
+        24,
+    );
+    let session = app.terminal.session_mut(id).unwrap();
+
+    assert_eq!(
+        terminal_text_input_bytes(session, "ㅎ".into()),
+        "ㅎ".as_bytes()
+    );
+
+    let mut ha = vec![0x7f];
+    ha.extend("하".as_bytes());
+    assert_eq!(terminal_text_input_bytes(session, "ㅏ".into()), ha);
+
+    let mut hang = vec![0x7f];
+    hang.extend("항".as_bytes());
+    assert_eq!(terminal_text_input_bytes(session, "ㅇ".into()), hang);
+
+    let mut hi = vec![0x7f];
+    hi.extend("하이".as_bytes());
+    assert_eq!(terminal_text_input_bytes(session, "ㅣ".into()), hi);
 }
 
 #[test]

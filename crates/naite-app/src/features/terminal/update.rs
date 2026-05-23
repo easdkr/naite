@@ -4,8 +4,8 @@ use crate::features::terminal::{
     self, SessionSelection, TerminalCommand, TerminalEvent, TerminalInput, TerminalTarget,
 };
 use crate::state::{
-    default_terminal_shell, IntegrationStatus, TerminalGridPoint, TerminalScreen,
-    TerminalSelection, TerminalStatus,
+    default_terminal_shell, IntegrationStatus, TerminalGridPoint, TerminalInputComposition,
+    TerminalScreen, TerminalSelection, TerminalSession, TerminalStatus,
 };
 use crate::{App, Message};
 
@@ -180,10 +180,28 @@ impl App {
                     return Task::none();
                 };
                 let bytes = match input {
-                    TerminalInput::Bytes(bytes) => bytes,
-                    TerminalInput::Paste(text) => bracketed_paste(text).into_bytes(),
+                    TerminalInput::Bytes(bytes) => {
+                        if let Some(session) = self.terminal.session_mut(id) {
+                            session.input_composition = None;
+                        }
+                        bytes
+                    }
+                    TerminalInput::Text(text) => {
+                        if let Some(session) = self.terminal.session_mut(id) {
+                            terminal_text_input_bytes(session, text)
+                        } else {
+                            naite_core::compose_hangul(&text).into_bytes()
+                        }
+                    }
+                    TerminalInput::Paste(text) => {
+                        if let Some(session) = self.terminal.session_mut(id) {
+                            session.input_composition = None;
+                        }
+                        bracketed_paste(text).into_bytes()
+                    }
                     TerminalInput::MaybeAcceptSuggestion { fallback } => {
                         if let Some(session) = self.terminal.session_mut(id) {
+                            session.input_composition = None;
                             if let Some(suggestion) = session.active_suggestion.take() {
                                 session.input_buffer.push_str(&suggestion.suffix);
                                 session.input_cursor = session.input_buffer.chars().count();
@@ -509,6 +527,27 @@ impl App {
 
 fn bracketed_paste(text: String) -> String {
     format!("\x1b[200~{text}\x1b[201~")
+}
+
+pub(crate) fn terminal_text_input_bytes(session: &mut TerminalSession, text: String) -> Vec<u8> {
+    if !is_composable_hangul_input(&text) {
+        session.input_composition = None;
+        return naite_core::compose_hangul(&text).into_bytes();
+    }
+
+    let previous = session.input_composition.take().unwrap_or_default();
+    let mut raw = previous.raw;
+    raw.push_str(&text);
+    let display = naite_core::compose_hangul(&raw);
+
+    let mut bytes = vec![0x7f; previous.display.chars().count()];
+    bytes.extend(display.as_bytes());
+    session.input_composition = Some(TerminalInputComposition { raw, display });
+    bytes
+}
+
+fn is_composable_hangul_input(text: &str) -> bool {
+    !text.is_empty() && text.chars().all(naite_core::is_hangul_compatibility_jamo)
 }
 
 fn terminal_grid_point_at(

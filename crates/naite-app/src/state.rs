@@ -686,6 +686,13 @@ pub struct TerminalSession {
     pub shell_history: Vec<String>,
     pub active_suggestion: Option<crate::features::terminal::suggestion::ActiveSuggestion>,
     pub selection: Option<TerminalSelection>,
+    pub input_composition: Option<TerminalInputComposition>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TerminalInputComposition {
+    pub raw: String,
+    pub display: String,
 }
 
 #[allow(dead_code)]
@@ -941,6 +948,7 @@ impl TerminalState {
             shell_history: Vec::new(),
             active_suggestion: None,
             selection: None,
+            input_composition: None,
         });
         self.active = Some(id);
         id
