@@ -69,6 +69,7 @@ pub enum Message {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TerminalInput {
     Bytes(Vec<u8>),
+    Text(String),
     Paste(String),
     MaybeAcceptSuggestion { fallback: Vec<u8> },
 }

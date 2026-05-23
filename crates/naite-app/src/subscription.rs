@@ -62,6 +62,7 @@ pub(crate) fn terminal_app_event(
     match event {
         Event::Keyboard(keyboard::Event::KeyPressed {
             key,
+            modified_key,
             physical_key,
             modifiers,
             text,
@@ -73,7 +74,8 @@ pub(crate) fn terminal_app_event(
             if matches!(status, event::Status::Captured) {
                 return keyboard_shortcut(key, physical_key, modifiers, status);
             }
-            terminal_key_input(key, physical_key, modifiers, text.as_deref()).map(Message::from)
+            terminal_key_input(key, modified_key, physical_key, modifiers, text.as_deref())
+                .map(Message::from)
         }
         Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
             Some(Message::CursorMoved(position))
@@ -337,6 +339,7 @@ fn terminal_global_shortcut(
 
 fn terminal_key_input(
     key: Key,
+    modified_key: Key,
     physical_key: Physical,
     modifiers: Modifiers,
     text: Option<&str>,
@@ -405,7 +408,20 @@ fn terminal_key_input(
             Key::Named(Named::PageUp) => b"\x1b[5~".to_vec(),
             Key::Named(Named::PageDown) => b"\x1b[6~".to_vec(),
             Key::Named(Named::Delete) => b"\x1b[3~".to_vec(),
-            _ => text?.as_bytes().to_vec(),
+            _ => {
+                let text = terminal_text_input(text, &modified_key, &key)?;
+                if modifiers.alt() {
+                    let mut bytes = Vec::with_capacity(text.len() + 1);
+                    bytes.push(0x1b);
+                    bytes.extend(naite_core::compose_hangul(&text).into_bytes());
+                    return Some(terminal::Message::Input(terminal::TerminalInput::Bytes(
+                        bytes,
+                    )));
+                }
+                return Some(terminal::Message::Input(terminal::TerminalInput::Text(
+                    text,
+                )));
+            }
         }
     };
 
@@ -421,6 +437,24 @@ fn terminal_key_input(
     Some(terminal::Message::Input(terminal::TerminalInput::Bytes(
         bytes,
     )))
+}
+
+fn terminal_text_input(text: Option<&str>, modified_key: &Key, key: &Key) -> Option<String> {
+    text.filter(|value| is_printable_text(value))
+        .map(str::to_string)
+        .or_else(|| key_text(modified_key))
+        .or_else(|| key_text(key))
+}
+
+fn key_text(key: &Key) -> Option<String> {
+    match key.as_ref() {
+        Key::Character(value) if is_printable_text(value) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
+fn is_printable_text(value: &str) -> bool {
+    !value.is_empty() && value.chars().all(|ch| !ch.is_control())
 }
 
 fn control_bytes(key: &Key, physical_key: Physical) -> Option<Vec<u8>> {

@@ -53,6 +53,7 @@ pub use providers::{
 };
 pub use refs::{BranchSyncStatus, RefKind, RefSummary, Refs};
 pub use repo::Repository;
+pub use text::{compose_hangul, is_hangul_compatibility_jamo};
 pub use workspace::WorkspaceRepoSummary;
 pub use worktree::{
     StatusEntry, StatusKind, WorktreeDiffKind, WorktreeDiffTarget, WorktreeStatus,
