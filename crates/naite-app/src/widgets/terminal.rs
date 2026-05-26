@@ -18,6 +18,8 @@ use crate::styles;
 use crate::theme::{self, color};
 use crate::Message;
 
+use super::common::uses_ui_font_fallback;
+
 /// Total height reserved for the bottom terminal pane when expanded.
 pub const TERMINAL_PANEL_HEIGHT: f32 = 320.0;
 /// Height reserved for the bottom terminal pane when minimized.
@@ -448,17 +450,6 @@ fn terminal_selection_cols(
     let row_start = row_start.min(line_len);
     let row_end = row_end.min(line_len);
     (row_start < row_end).then_some((row_start, row_end))
-}
-
-fn uses_ui_font_fallback(ch: char) -> bool {
-    matches!(
-        ch as u32,
-        0x1100..=0x11ff
-            | 0x3130..=0x318f
-            | 0xac00..=0xd7af
-            | 0x3040..=0x30ff
-            | 0x3400..=0x9fff
-    )
 }
 
 fn empty_terminal<'a>(repo_path: Option<&'a Path>) -> Element<'a, Message> {
