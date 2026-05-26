@@ -95,6 +95,17 @@ pub(super) fn empty_state<'a>() -> Element<'a, Message> {
     .into()
 }
 
+pub(super) fn uses_ui_font_fallback(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        0x1100..=0x11ff
+            | 0x3130..=0x318f
+            | 0xac00..=0xd7af
+            | 0x3040..=0x30ff
+            | 0x3400..=0x9fff
+    )
+}
+
 pub(super) fn empty_filter_state<'a>() -> Element<'a, Message> {
     container(
         text("No commits match this filter.")

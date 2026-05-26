@@ -1,6 +1,7 @@
 //! Confirmation modals: force-checkout, branch delete, discard, and stash prompts.
 
-use iced::widget::{button, column, container, row, text, Space};
+use iced::widget::text::Span;
+use iced::widget::{button, column, container, rich_text, row, text, Space};
 use iced::widget::{button as iced_button, text::Wrapping};
 use iced::{Alignment, Element, Length, Padding, Theme};
 use naite_core::{DiffLine, WorktreeDiffKind};
@@ -16,6 +17,8 @@ use crate::{
     ForcePushPrompt, ForceSyncPrompt, HistoryPrompt, Message, RebasePrompt, StashPrompt,
     StashPromptAction, TagDeletePrompt, UndoPrompt, WorktreeRemovePrompt,
 };
+
+use super::common::uses_ui_font_fallback;
 
 pub fn checkout_prompt<'a>(prompt: &'a CheckoutPrompt) -> Element<'a, Message> {
     let detail = format!(
@@ -439,10 +442,9 @@ pub fn rebase_prompt<'a>(prompt: &'a RebasePrompt, loading: bool) -> Element<'a,
             .font(theme::font_regular())
             .color(color::TEXT_MUTED),
         container(
-            text(prompt.todo_preview.clone())
+            rich_text(code_preview_spans(prompt.todo_preview.clone()))
                 .size(theme::FS_SM)
                 .font(theme::font_code())
-                .color(color::TEXT_MUTED)
         )
         .padding(Padding::from([8, 12]))
         .width(Length::Fill)
@@ -466,6 +468,46 @@ pub fn rebase_prompt<'a>(prompt: &'a RebasePrompt, loading: bool) -> Element<'a,
     .spacing(theme::SP_MD)
     .width(Length::Fill)
     .into()
+}
+
+fn code_preview_spans(text: String) -> Vec<Span<'static, Message>> {
+    let mut spans = Vec::new();
+    let mut current = String::new();
+    let mut current_fallback = None;
+
+    for ch in text.chars() {
+        let fallback = uses_ui_font_fallback(ch);
+        if current_fallback == Some(fallback) {
+            current.push(ch);
+            continue;
+        }
+        if !current.is_empty() {
+            spans.push(code_preview_span(
+                std::mem::take(&mut current),
+                current_fallback.unwrap_or(false),
+            ));
+        }
+        current.push(ch);
+        current_fallback = Some(fallback);
+    }
+
+    if !current.is_empty() {
+        spans.push(code_preview_span(
+            current,
+            current_fallback.unwrap_or(false),
+        ));
+    }
+
+    spans
+}
+
+fn code_preview_span(text: String, fallback: bool) -> Span<'static, Message> {
+    let span = Span::new(text).color(color::TEXT_MUTED);
+    if fallback {
+        span.font(theme::font_regular())
+    } else {
+        span
+    }
 }
 
 fn prompt_action_button<'a>(
