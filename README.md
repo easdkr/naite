@@ -213,5 +213,6 @@ bundle이므로 macOS 보안 경고가 뜰 수 있습니다.
 
 ## 저장소 자산
 
+- Conductor repo icon: `assets/icon.png`
 - GitHub social preview: `.github/social-preview.png`
 - 업로드 위치: GitHub repository Settings → Social preview
