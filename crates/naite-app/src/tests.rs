@@ -2787,6 +2787,85 @@ fn release_promotion_auto_mode_ignores_manual_controls() {
 }
 
 #[test]
+fn release_promotion_action_waits_for_auto_fetch_to_finish() {
+    let path = PathBuf::from("/tmp/naite");
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(path.clone()),
+            ..Default::default()
+        },
+        operation: OperationState {
+            auto_fetch_path: Some(path.clone()),
+            ..Default::default()
+        },
+        release_prep: ReleasePrepState {
+            active_profile: Some(ReleaseProfile {
+                remote: "origin".into(),
+                source_branch: "staging".into(),
+                target_branch: "main".into(),
+            }),
+            phase: ReleasePrepPhase::Actions,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let _ = app.update(Message::from(release_prep::Message::ActionRequested(
+        release_prep::ReleasePrepAction::UpdateTargetFromSource,
+    )));
+
+    assert_eq!(
+        app.operation.auto_fetch_path.as_deref(),
+        Some(path.as_path())
+    );
+    assert!(!app.operation.loading);
+    assert_eq!(app.release_prep.phase, ReleasePrepPhase::Actions);
+    assert_eq!(app.release_prep.active_action, None);
+}
+
+#[test]
+fn release_promotion_auto_waits_for_auto_fetch_without_losing_next_action() {
+    let path = PathBuf::from("/tmp/naite");
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(path.clone()),
+            ..Default::default()
+        },
+        operation: OperationState {
+            auto_fetch_path: Some(path.clone()),
+            ..Default::default()
+        },
+        release_prep: ReleasePrepState {
+            active_profile: Some(ReleaseProfile {
+                remote: "origin".into(),
+                source_branch: "staging".into(),
+                target_branch: "main".into(),
+            }),
+            phase: ReleasePrepPhase::Actions,
+            auto_running: true,
+            auto_next_action: Some(release_prep::ReleasePrepAction::UpdateTargetFromSource),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let _ = app.continue_release_prep_auto();
+
+    assert_eq!(
+        app.operation.auto_fetch_path.as_deref(),
+        Some(path.as_path())
+    );
+    assert!(!app.operation.loading);
+    assert!(app.release_prep.auto_running);
+    assert_eq!(
+        app.release_prep.auto_next_action,
+        Some(release_prep::ReleasePrepAction::UpdateTargetFromSource)
+    );
+    assert_eq!(app.release_prep.phase, ReleasePrepPhase::Actions);
+    assert_eq!(app.release_prep.active_action, None);
+}
+
+#[test]
 fn release_promotion_completed_steps_cannot_run_again() {
     let mut app = App {
         repo: RepositoryState {
@@ -4849,6 +4928,32 @@ fn auto_fetch_tick_starts_background_fetch_without_global_loading() {
         app.operation.auto_fetch_path.as_deref(),
         Some(Path::new("/tmp/naite"))
     );
+    assert!(!app.operation.loading);
+    assert!(app.operation.error.is_none());
+}
+
+#[test]
+fn auto_fetch_tick_skips_while_release_prep_modal_is_open() {
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(PathBuf::from("/tmp/naite")),
+            sync_status: BranchSyncStatus {
+                upstream: Some("origin/main".into()),
+                ahead: 0,
+                behind: 0,
+            },
+            ..Default::default()
+        },
+        release_prep: ReleasePrepState {
+            phase: ReleasePrepPhase::Actions,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let _ = app.update(Message::AutoFetchTick);
+
+    assert!(app.operation.auto_fetch_path.is_none());
     assert!(!app.operation.loading);
     assert!(app.operation.error.is_none());
 }
