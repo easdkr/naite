@@ -35,6 +35,7 @@ pub(super) fn error_card<'a>(
     err: &'a str,
     recovery: Option<ErrorRecovery<'a>>,
 ) -> Element<'a, Message> {
+    let display_error = crate::error_display::format_git_error_for_display(err);
     let mut actions = row![].align_y(Alignment::Center).spacing(theme::SP_SM);
     if let Some(recovery) = recovery {
         actions = actions.push(
@@ -58,7 +59,7 @@ pub(super) fn error_card<'a>(
     container(
         row![
             container(
-                text(format!("Error: {err}"))
+                text(format!("Error: {display_error}"))
                     .size(theme::FS_BASE)
                     .font(theme::font_regular())
                     .color(color::DANGER),

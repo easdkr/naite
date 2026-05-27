@@ -83,6 +83,25 @@ impl Repository {
         let cwd = self.workdir().unwrap_or(self.path());
         command::run_git_with_env(cwd, args, envs)
     }
+
+    pub(crate) fn git_without_optional_locks(&self, args: &[&str]) -> Result<String, Error> {
+        let cwd = self.workdir().unwrap_or(self.path());
+        command::run_git_with_env(cwd, args, &[("GIT_OPTIONAL_LOCKS", "0")])
+    }
+
+    pub(crate) fn git_without_optional_locks_allowing_exit_codes(
+        &self,
+        args: &[&str],
+        allowed_exit_codes: &[i32],
+    ) -> Result<String, Error> {
+        let cwd = self.workdir().unwrap_or(self.path());
+        command::run_git_with_env_allowing_exit_codes(
+            cwd,
+            args,
+            &[("GIT_OPTIONAL_LOCKS", "0")],
+            allowed_exit_codes,
+        )
+    }
 }
 
 pub(crate) fn clone_directory_name(url: &str) -> Option<String> {

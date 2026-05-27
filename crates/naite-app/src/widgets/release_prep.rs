@@ -579,6 +579,9 @@ fn release_error<'a>(error: &'a str) -> Element<'a, Message> {
 }
 
 fn release_error_message(error: &str) -> String {
+    if crate::error_display::is_git_index_lock_error(error) {
+        return crate::error_display::GIT_INDEX_LOCK_MESSAGE.into();
+    }
     if error.contains("cannot lock ref") {
         return "Remote branch data was updated by another Git operation. Retry release promotion."
             .into();
@@ -610,6 +613,16 @@ mod tests {
         assert_eq!(
             release_error_message(raw),
             "Remote branch data was updated by another Git operation. Retry release promotion."
+        );
+    }
+
+    #[test]
+    fn release_error_message_summarizes_index_lock_errors() {
+        let raw = "git command failed: git status --porcelain=v1: fatal: Unable to create '/repo/.git/index.lock': File exists";
+
+        assert_eq!(
+            release_error_message(raw),
+            crate::error_display::GIT_INDEX_LOCK_MESSAGE
         );
     }
 }

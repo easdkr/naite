@@ -4886,6 +4886,38 @@ fn auto_fetch_done_refreshes_active_repo_without_status_noise() {
 }
 
 #[test]
+fn auto_fetch_done_skips_refresh_during_foreground_operation() {
+    let path = PathBuf::from("/tmp/naite");
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(path.clone()),
+            sync_status: BranchSyncStatus {
+                upstream: Some("origin/main".into()),
+                ahead: 0,
+                behind: 0,
+            },
+            ..Default::default()
+        },
+        operation: OperationState {
+            loading: true,
+            auto_fetch_path: Some(path.clone()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let _ = app.update(Message::from(fetch::Message::AutoDone {
+        path: path.clone(),
+        result: Ok(()),
+    }));
+
+    assert!(app.operation.auto_fetch_path.is_none());
+    assert!(app.operation.loading);
+    assert!(!app.tabs.refreshing.contains(&path));
+    assert!(app.operation.error.is_none());
+}
+
+#[test]
 fn auto_fetch_done_retargets_after_repo_switch() {
     let fetched_path = PathBuf::from("/tmp/naite-old");
     let current_path = PathBuf::from("/tmp/naite-current");
