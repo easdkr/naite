@@ -17,7 +17,11 @@ impl App {
                 }
                 self.operation.auto_fetch_path = None;
                 if result.is_ok() && self.repo.path.as_ref() == Some(&path) {
-                    self.spawn_tab_refresh(path)
+                    if self.operation.loading {
+                        Task::none()
+                    } else {
+                        self.spawn_tab_refresh(path)
+                    }
                 } else if self.repo.path.as_ref() != Some(&path) {
                     self.start_auto_fetch()
                 } else {

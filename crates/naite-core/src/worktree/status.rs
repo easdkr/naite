@@ -73,7 +73,7 @@ impl Repository {
     }
 
     pub fn status_detail(&self) -> Result<WorktreeStatusDetail, Error> {
-        let output = self.git(&[
+        let output = self.git_without_optional_locks(&[
             "status",
             "--porcelain=v1",
             "-z",

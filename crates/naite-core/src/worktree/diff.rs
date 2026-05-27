@@ -31,12 +31,20 @@ impl Repository {
 
     fn tracked_worktree_diff(&self, path: &str, cached: bool) -> Result<CommitDiff, Error> {
         let name_status = if cached {
-            self.git(&["diff", "--cached", "--name-status", "-M", "-C", "--", path])?
+            self.git_without_optional_locks(&[
+                "diff",
+                "--cached",
+                "--name-status",
+                "-M",
+                "-C",
+                "--",
+                path,
+            ])?
         } else {
-            self.git(&["diff", "--name-status", "-M", "-C", "--", path])?
+            self.git_without_optional_locks(&["diff", "--name-status", "-M", "-C", "--", path])?
         };
         let patch = if cached {
-            self.git(&[
+            self.git_without_optional_locks(&[
                 "diff",
                 "--cached",
                 "--no-ext-diff",
@@ -48,7 +56,7 @@ impl Repository {
                 path,
             ])?
         } else {
-            self.git(&[
+            self.git_without_optional_locks(&[
                 "diff",
                 "--no-ext-diff",
                 "--no-color",
@@ -64,7 +72,7 @@ impl Repository {
     }
 
     fn untracked_worktree_diff(&self, path: &str) -> Result<CommitDiff, Error> {
-        let patch = self.git_allowing_exit_codes(
+        let patch = self.git_without_optional_locks_allowing_exit_codes(
             &[
                 "diff",
                 "--no-index",
@@ -82,7 +90,7 @@ impl Repository {
     }
 
     fn conflict_worktree_diff(&self, path: &str) -> Result<CommitDiff, Error> {
-        let patch = self.git_allowing_exit_codes(
+        let patch = self.git_without_optional_locks_allowing_exit_codes(
             &[
                 "diff",
                 "--ours",

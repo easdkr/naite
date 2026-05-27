@@ -62,7 +62,6 @@ pub fn checkout_prompt<'a>(prompt: &'a CheckoutPrompt) -> Element<'a, Message> {
     )
     .padding(theme::SP_MD)
     .width(Length::Fill)
-    .style(styles::warning_card)
     .into()
 }
 
@@ -386,7 +385,6 @@ pub fn discard_prompt<'a>(prompt: &'a DiscardPrompt, loading: bool) -> Element<'
     )
     .padding(theme::SP_MD)
     .width(Length::Fill)
-    .style(styles::warning_card)
     .into()
 }
 pub fn history_prompt<'a>(prompt: &'a HistoryPrompt, loading: bool) -> Element<'a, Message> {
@@ -418,7 +416,6 @@ pub fn history_prompt<'a>(prompt: &'a HistoryPrompt, loading: bool) -> Element<'
     )
     .padding(theme::SP_MD)
     .width(Length::Fill)
-    .style(styles::warning_card)
     .into()
 }
 
@@ -567,7 +564,6 @@ pub fn tag_delete_prompt<'a>(prompt: &'a TagDeletePrompt, loading: bool) -> Elem
     )
     .padding(theme::SP_MD)
     .width(Length::Fill)
-    .style(styles::warning_card)
     .into()
 }
 
@@ -613,7 +609,6 @@ pub fn undo_prompt<'a>(prompt: &'a UndoPrompt, loading: bool) -> Element<'a, Mes
     )
     .padding(theme::SP_MD)
     .width(Length::Fill)
-    .style(styles::warning_card)
     .into()
 }
 
@@ -664,7 +659,6 @@ pub fn worktree_remove_prompt<'a>(
     )
     .padding(theme::SP_MD)
     .width(Length::Fill)
-    .style(styles::warning_card)
     .into()
 }
 
@@ -718,7 +712,6 @@ pub fn stash_prompt<'a>(prompt: &'a StashPrompt, loading: bool) -> Element<'a, M
     )
     .padding(theme::SP_MD)
     .width(Length::Fill)
-    .style(styles::warning_card)
     .into()
 }
 

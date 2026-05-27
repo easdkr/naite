@@ -2,6 +2,7 @@
 
 mod app;
 mod app_icon;
+mod error_display;
 mod features;
 mod icons;
 mod message;
