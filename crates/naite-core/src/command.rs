@@ -2,8 +2,18 @@ use std::ffi::{OsStr, OsString};
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::thread;
+use std::time::Duration;
 
 use crate::Error;
+
+const INDEX_LOCK_RETRY_DELAYS: [Duration; 5] = [
+    Duration::from_millis(100),
+    Duration::from_millis(200),
+    Duration::from_millis(400),
+    Duration::from_millis(800),
+    Duration::from_millis(1_600),
+];
 
 pub(crate) fn run_git<I, S>(cwd: &Path, args: I) -> Result<String, Error>
 where
@@ -115,8 +125,29 @@ fn run_git_command(
 ) -> Result<String, Error> {
     let command = format_git_command(&args);
 
+    let mut next_delay = INDEX_LOCK_RETRY_DELAYS.iter();
+    loop {
+        match run_git_command_once(cwd, &args, allowed_exit_codes, envs, &command) {
+            Err(Error::GitCommand { stderr, .. }) if is_index_lock_stderr(&stderr) => {
+                let Some(delay) = next_delay.next() else {
+                    return Err(Error::GitCommand { command, stderr });
+                };
+                thread::sleep(*delay);
+            }
+            result => return result,
+        }
+    }
+}
+
+fn run_git_command_once(
+    cwd: &Path,
+    args: &[OsString],
+    allowed_exit_codes: &[i32],
+    envs: &[(OsString, OsString)],
+    command: &str,
+) -> Result<String, Error> {
     let mut cmd = Command::new("git");
-    cmd.args(&args).current_dir(cwd);
+    cmd.args(args).current_dir(cwd);
     for (key, value) in envs {
         cmd.env(key, value);
     }
@@ -126,7 +157,7 @@ fn run_git_command(
             Error::GitNotFound
         } else {
             Error::GitCommand {
-                command: command.clone(),
+                command: command.to_string(),
                 stderr: source.to_string(),
             }
         }
@@ -146,8 +177,18 @@ fn run_git_command(
         } else {
             stderr
         };
-        Err(Error::GitCommand { command, stderr })
+        Err(Error::GitCommand {
+            command: command.to_string(),
+            stderr,
+        })
     }
+}
+
+fn is_index_lock_stderr(stderr: &str) -> bool {
+    let lower = stderr.to_lowercase();
+    lower.contains(".git/index.lock")
+        || (lower.contains("unable to create") && lower.contains("index.lock"))
+        || lower.contains("another git process seems to be running")
 }
 
 pub(crate) fn run_git_with_stdin<I, S>(cwd: &Path, args: I, stdin: &str) -> Result<String, Error>
@@ -222,6 +263,9 @@ fn format_command(program: &str, args: &[OsString]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_helpers::TempRepo;
+    use std::fs;
+    use std::time::Duration;
 
     #[test]
     fn formats_git_command_for_errors() {
@@ -239,5 +283,44 @@ mod tests {
         let command = format_command("gh", &[OsString::from("pr"), OsString::from("list")]);
 
         assert_eq!(command, "gh pr list");
+    }
+
+    #[test]
+    fn retries_git_command_until_index_lock_clears() {
+        let repo = TempRepo::init_with_commit("command-index-lock-retry");
+        repo.write("file.txt", "changed\n");
+        let lock_path = repo.path.join(".git/index.lock");
+        fs::write(&lock_path, "locked").unwrap();
+
+        let lock_for_thread = lock_path.clone();
+        let remover = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            fs::remove_file(lock_for_thread).unwrap();
+        });
+
+        let result = run_git(&repo.path, ["add", "-A"]);
+        remover.join().unwrap();
+
+        assert!(result.is_ok());
+        assert!(!lock_path.exists());
+    }
+
+    #[test]
+    fn returns_index_lock_error_after_retry_budget_is_exhausted() {
+        let repo = TempRepo::init_with_commit("command-index-lock-stale");
+        repo.write("file.txt", "changed\n");
+        let lock_path = repo.path.join(".git/index.lock");
+        fs::write(&lock_path, "locked").unwrap();
+
+        let result = run_git(&repo.path, ["add", "-A"]);
+
+        assert!(lock_path.exists());
+        match result {
+            Err(Error::GitCommand { command, stderr }) => {
+                assert_eq!(command, "git add -A");
+                assert!(is_index_lock_stderr(&stderr), "{stderr}");
+            }
+            other => panic!("expected git index lock error, got {other:?}"),
+        }
     }
 }

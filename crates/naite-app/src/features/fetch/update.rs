@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 use iced::Task;
 
 use crate::features::fetch::{self, FetchScope, Message as FetchMessage};
+use crate::state::ReleasePrepPhase;
 use crate::{features::repo_open, App, Message};
 
 const AUTO_FETCH_MIN_INTERVAL: Duration = Duration::from_secs(60);
@@ -25,7 +26,7 @@ impl App {
                 } else if self.repo.path.as_ref() != Some(&path) {
                     self.start_auto_fetch()
                 } else {
-                    Task::none()
+                    self.continue_release_prep_auto()
                 }
             }
             FetchMessage::Done { scope, result } => {
@@ -81,6 +82,8 @@ impl App {
         };
         if self.operation.loading
             || self.operation.auto_fetch_path.is_some()
+            || self.release_prep.phase != ReleasePrepPhase::Idle
+            || self.release_prep.auto_running
             || self.repo.sync_status.upstream.is_none()
             || self.operation.auto_fetch_last_started.as_ref().is_some_and(
                 |(last_path, started_at)| {

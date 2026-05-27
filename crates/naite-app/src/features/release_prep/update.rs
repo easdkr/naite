@@ -236,7 +236,10 @@ impl App {
     }
 
     pub(crate) fn continue_release_prep_auto(&mut self) -> Task<Message> {
-        if !self.release_prep.auto_running || self.operation.loading {
+        if !self.release_prep.auto_running
+            || self.operation.loading
+            || self.operation.auto_fetch_path.is_some()
+        {
             return Task::none();
         }
         let Some(action) = self.release_prep.auto_next_action.take() else {
@@ -274,7 +277,7 @@ impl App {
         let Some(profile) = self.release_prep.active_profile.clone() else {
             return Task::none();
         };
-        if self.operation.loading {
+        if self.operation.loading || self.operation.auto_fetch_path.is_some() {
             return Task::none();
         }
         self.operation.loading = true;
