@@ -10,12 +10,12 @@ impl Repository {
             .filter(|remote| !remote.is_empty())
             .ok_or(Error::NoUpstream)?;
 
-        let _ = self.git(&["fetch", remote])?;
+        let _ = self.git(&["fetch", "--tags", remote])?;
         Ok(())
     }
 
     pub fn fetch_all_remotes(&self) -> Result<(), Error> {
-        let _ = self.git(&["fetch", "--all"])?;
+        let _ = self.git(&["fetch", "--all", "--tags"])?;
         Ok(())
     }
 }
@@ -104,6 +104,36 @@ mod tests {
     }
 
     #[test]
+    fn fetch_current_remote_fetches_tags_added_to_existing_commits() {
+        let remote = TempRepo::new("fetch-tag-existing-remote");
+        remote.git(&["init", "--bare"]);
+
+        let source = TempRepo::init_with_commit("fetch-tag-existing-source");
+        source.git(&["branch", "-M", "main"]);
+        source.git(&["remote", "add", "origin", remote.path.to_str().unwrap()]);
+        source.git(&["push", "-u", "origin", "main"]);
+        remote.git(&["symbolic-ref", "HEAD", "refs/heads/main"]);
+
+        let local_parent = TempRepo::new("fetch-tag-existing-local-parent");
+        let local_path = clone_main(&remote, &local_parent);
+
+        source.git(&["tag", "v1.0.0"]);
+        source.git(&["push", "origin", "refs/tags/v1.0.0"]);
+
+        assert!(
+            command::run_git(&local_path, ["rev-parse", "--verify", "refs/tags/v1.0.0"]).is_err()
+        );
+
+        let repo = Repository::open(&local_path).unwrap();
+        repo.fetch_current_remote().unwrap();
+
+        let local_tag =
+            command::run_git(&local_path, ["rev-parse", "--verify", "refs/tags/v1.0.0"]).unwrap();
+        let source_head = source.git_output(&["rev-parse", "HEAD"]);
+        assert_eq!(local_tag.trim(), source_head.trim());
+    }
+
+    #[test]
     fn fetch_all_remotes_updates_each_remote_tracking_ref() {
         let origin = TempRepo::new("fetch-all-origin");
         origin.git(&["init", "--bare"]);
@@ -162,5 +192,35 @@ mod tests {
         let after_backup = command::run_git(&local_path, ["rev-parse", "backup/main"]).unwrap();
         assert_eq!(after_origin.trim(), source_head.trim());
         assert_eq!(after_backup.trim(), source_head.trim());
+    }
+
+    #[test]
+    fn fetch_all_remotes_fetches_tags_added_to_existing_commits() {
+        let origin = TempRepo::new("fetch-all-tag-origin");
+        origin.git(&["init", "--bare"]);
+
+        let source = TempRepo::init_with_commit("fetch-all-tag-source");
+        source.git(&["branch", "-M", "main"]);
+        source.git(&["remote", "add", "origin", origin.path.to_str().unwrap()]);
+        source.git(&["push", "-u", "origin", "main"]);
+        origin.git(&["symbolic-ref", "HEAD", "refs/heads/main"]);
+
+        let local_parent = TempRepo::new("fetch-all-tag-local-parent");
+        let local_path = clone_main(&origin, &local_parent);
+
+        source.git(&["tag", "v1.0.0"]);
+        source.git(&["push", "origin", "refs/tags/v1.0.0"]);
+
+        assert!(
+            command::run_git(&local_path, ["rev-parse", "--verify", "refs/tags/v1.0.0"]).is_err()
+        );
+
+        let repo = Repository::open(&local_path).unwrap();
+        repo.fetch_all_remotes().unwrap();
+
+        let local_tag =
+            command::run_git(&local_path, ["rev-parse", "--verify", "refs/tags/v1.0.0"]).unwrap();
+        let source_head = source.git_output(&["rev-parse", "HEAD"]);
+        assert_eq!(local_tag.trim(), source_head.trim());
     }
 }
