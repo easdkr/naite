@@ -26,7 +26,7 @@ impl App {
                 } else if self.repo.path.as_ref() != Some(&path) {
                     self.start_auto_fetch()
                 } else {
-                    Task::none()
+                    self.continue_release_prep_auto()
                 }
             }
             FetchMessage::Done { scope, result } => {
