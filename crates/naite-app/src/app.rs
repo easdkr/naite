@@ -1,7 +1,7 @@
 use iced::widget::{pane_grid, scrollable, text_input};
 use naite_core::{
-    BranchSyncStatus, CommitSummary, Hunk, PullMode, RefKind, RefSummary, StashSummary,
-    WorktreeDiffTarget, WorktreeStatus, WorktreeSummary,
+    BranchSyncStatus, CommitSummary, Hunk, PullMode, RebaseAction, RefKind, RefSummary,
+    StashSummary, WorktreeDiffTarget, WorktreeStatus, WorktreeSummary,
 };
 
 use crate::features::fetch::FetchScope;
@@ -180,8 +180,16 @@ pub struct HistoryPrompt {
 pub struct RebasePrompt {
     pub title: String,
     pub detail: String,
-    pub todo_preview: String,
+    pub preview_rows: Vec<RebasePromptRow>,
+    pub hidden_row_count: usize,
     pub apply_mode: RebaseApplyMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RebasePromptRow {
+    pub action: RebaseAction,
+    pub short_id: String,
+    pub summary: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

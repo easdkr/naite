@@ -1,10 +1,9 @@
 //! Confirmation modals: force-checkout, branch delete, discard, and stash prompts.
 
-use iced::widget::text::Span;
-use iced::widget::{button, column, container, rich_text, row, text, Space};
+use iced::widget::{button, column, container, row, text, Space};
 use iced::widget::{button as iced_button, text::Wrapping};
-use iced::{Alignment, Element, Length, Padding, Theme};
-use naite_core::{DiffLine, WorktreeDiffKind};
+use iced::{Alignment, Color, Element, Length, Padding, Theme};
+use naite_core::{DiffLine, RebaseAction, WorktreeDiffKind};
 
 use crate::features::rebase::RebaseApplyMode;
 use crate::features::{
@@ -17,8 +16,6 @@ use crate::{
     ForcePushPrompt, ForceSyncPrompt, HistoryPrompt, Message, RebasePrompt, StashPrompt,
     StashPromptAction, TagDeletePrompt, UndoPrompt, WorktreeRemovePrompt,
 };
-
-use super::common::uses_ui_font_fallback;
 
 pub fn checkout_prompt<'a>(prompt: &'a CheckoutPrompt) -> Element<'a, Message> {
     let detail = format!(
@@ -438,14 +435,7 @@ pub fn rebase_prompt<'a>(prompt: &'a RebasePrompt, loading: bool) -> Element<'a,
             .size(theme::FS_SM)
             .font(theme::font_regular())
             .color(color::TEXT_MUTED),
-        container(
-            rich_text(code_preview_spans(prompt.todo_preview.clone()))
-                .size(theme::FS_SM)
-                .font(theme::font_code())
-        )
-        .padding(Padding::from([8, 12]))
-        .width(Length::Fill)
-        .style(styles::code_preview),
+        rebase_prompt_preview(prompt),
         row![
             Space::with_width(Length::Fill),
             prompt_action_button(
@@ -467,43 +457,96 @@ pub fn rebase_prompt<'a>(prompt: &'a RebasePrompt, loading: bool) -> Element<'a,
     .into()
 }
 
-fn code_preview_spans(text: String) -> Vec<Span<'static, Message>> {
-    let mut spans = Vec::new();
-    let mut current = String::new();
-    let mut current_fallback = None;
-
-    for ch in text.chars() {
-        let fallback = uses_ui_font_fallback(ch);
-        if current_fallback == Some(fallback) {
-            current.push(ch);
-            continue;
-        }
-        if !current.is_empty() {
-            spans.push(code_preview_span(
-                std::mem::take(&mut current),
-                current_fallback.unwrap_or(false),
-            ));
-        }
-        current.push(ch);
-        current_fallback = Some(fallback);
+fn rebase_prompt_preview<'a>(prompt: &'a RebasePrompt) -> Element<'a, Message> {
+    let mut rows = column![].spacing(0);
+    for row in &prompt.preview_rows {
+        rows = rows.push(rebase_prompt_preview_row(row));
+    }
+    if prompt.hidden_row_count > 0 {
+        rows = rows.push(rebase_prompt_preview_footer(prompt.hidden_row_count));
     }
 
-    if !current.is_empty() {
-        spans.push(code_preview_span(
-            current,
-            current_fallback.unwrap_or(false),
-        ));
-    }
-
-    spans
+    container(rows)
+        .padding(Padding::from([4, 0]))
+        .width(Length::Fill)
+        .style(styles::rebase_prompt_preview_surface)
+        .into()
 }
 
-fn code_preview_span(text: String, fallback: bool) -> Span<'static, Message> {
-    let span = Span::new(text).color(color::TEXT_MUTED);
-    if fallback {
-        span.font(theme::font_regular())
-    } else {
-        span
+fn rebase_prompt_preview_row<'a>(row_data: &'a crate::RebasePromptRow) -> Element<'a, Message> {
+    let action = container(
+        text(action_token(row_data.action))
+            .size(theme::FS_XS)
+            .font(theme::font_semibold())
+            .color(rebase_prompt_action_color(row_data.action))
+            .wrapping(Wrapping::None),
+    )
+    .center_x(Length::Fixed(54.0))
+    .padding(Padding::from([3, 0]))
+    .style(styles::rebase_prompt_action_chip);
+
+    let sha = text(row_data.short_id.clone())
+        .size(theme::FS_SM)
+        .font(iced::Font::MONOSPACE)
+        .color(color::TEXT_MUTED)
+        .wrapping(Wrapping::None);
+
+    let summary: Element<'a, Message> = container(
+        text(row_data.summary.clone())
+            .size(theme::FS_SM)
+            .font(theme::font_regular())
+            .color(color::TEXT)
+            .wrapping(Wrapping::None),
+    )
+    .width(Length::Fill)
+    .clip(true)
+    .into();
+
+    container(
+        row![action, container(sha).width(Length::Fixed(58.0)), summary,]
+            .align_y(Alignment::Center)
+            .spacing(theme::SP_SM),
+    )
+    .height(Length::Fixed(30.0))
+    .padding(Padding::from([0, 8]))
+    .width(Length::Fill)
+    .style(styles::rebase_prompt_preview_row)
+    .into()
+}
+
+fn rebase_prompt_preview_footer<'a>(hidden_count: usize) -> Element<'a, Message> {
+    container(
+        text(format!("+{hidden_count} more operations"))
+            .size(theme::FS_XS)
+            .font(theme::font_regular())
+            .color(color::TEXT_SUBTLE)
+            .wrapping(Wrapping::None),
+    )
+    .height(Length::Fixed(24.0))
+    .padding(Padding::from([0, 8]))
+    .width(Length::Fill)
+    .style(styles::rebase_prompt_preview_footer)
+    .into()
+}
+
+fn action_token(action: RebaseAction) -> &'static str {
+    match action {
+        RebaseAction::Pick => "pick",
+        RebaseAction::Reword => "reword",
+        RebaseAction::Edit => "edit",
+        RebaseAction::Squash => "squash",
+        RebaseAction::Fixup => "fixup",
+        RebaseAction::Drop => "drop",
+    }
+}
+
+fn rebase_prompt_action_color(action: RebaseAction) -> Color {
+    match action {
+        RebaseAction::Pick => color::TEXT_MUTED,
+        RebaseAction::Reword | RebaseAction::Squash => color::ACCENT,
+        RebaseAction::Fixup => color::with_alpha(color::ACCENT, 0.75),
+        RebaseAction::Edit => color::WARNING,
+        RebaseAction::Drop => color::DANGER,
     }
 }
 

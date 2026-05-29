@@ -117,16 +117,39 @@ pub fn inset_card(_: &Theme) -> container::Style {
     }
 }
 
-/// Inset code/command preview that should read as a depressed block against
-/// a SURFACE_2 modal or panel. Uses BG so command previews feel terminal-like
-/// rather than blending into the surrounding card.
-pub fn code_preview(_: &Theme) -> container::Style {
+pub fn rebase_prompt_preview_surface(_: &Theme) -> container::Style {
     container::Style {
         background: Some(Background::Color(color::BG)),
         border: Border {
             color: color::BORDER,
             width: 1.0,
             radius: theme::R_MD.into(),
+        },
+        ..Default::default()
+    }
+}
+
+pub fn rebase_prompt_preview_row(_: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(Color::TRANSPARENT)),
+        ..Default::default()
+    }
+}
+
+pub fn rebase_prompt_preview_footer(_: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(color::with_alpha(color::SURFACE_1, 0.65))),
+        ..Default::default()
+    }
+}
+
+pub fn rebase_prompt_action_chip(_: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(color::with_alpha(color::SURFACE_1, 0.85))),
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: theme::R_SM.into(),
         },
         ..Default::default()
     }

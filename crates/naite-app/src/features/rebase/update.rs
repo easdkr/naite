@@ -10,7 +10,7 @@ use crate::features::rebase::{
 use crate::features::{release_prep, repo_open};
 use crate::state::ReleasePrepPhase;
 use crate::tasks;
-use crate::{App, Message, RebasePrompt};
+use crate::{App, Message, RebasePrompt, RebasePromptRow};
 
 use super::state::RebasePlanRow;
 
@@ -409,6 +409,7 @@ impl App {
                 " After it succeeds, naite will update and push the target, then rebase and push the source."
             }
         };
+        let (preview_rows, hidden_row_count) = rebase_prompt_preview(session);
         self.selection.rebase_confirmation = Some(RebasePrompt {
             title: format!(
                 "Interactive rebase {} onto {}",
@@ -420,7 +421,8 @@ impl App {
                 plan_counts(session),
                 follow_up
             ),
-            todo_preview: format_todo_preview(session),
+            preview_rows,
+            hidden_row_count,
             apply_mode,
         });
         Task::none()
@@ -730,31 +732,35 @@ fn plan_counts(session: &InteractiveRebaseSession) -> String {
     )
 }
 
-fn format_todo_preview(session: &InteractiveRebaseSession) -> String {
-    session
+const REBASE_PROMPT_PREVIEW_LIMIT: usize = 8;
+const REBASE_PROMPT_SUMMARY_MAX_CHARS: usize = 72;
+
+fn rebase_prompt_preview(session: &InteractiveRebaseSession) -> (Vec<RebasePromptRow>, usize) {
+    let rows = session
         .plan
         .iter()
-        .map(|row| {
-            format!(
-                "{} {} {}",
-                action_token(row.action),
-                short_id(&row.commit.id),
-                row.commit.summary
-            )
+        .take(REBASE_PROMPT_PREVIEW_LIMIT)
+        .map(|row| RebasePromptRow {
+            action: row.action,
+            short_id: short_id(&row.commit.id),
+            summary: compact_end(&row.commit.summary, REBASE_PROMPT_SUMMARY_MAX_CHARS),
         })
-        .collect::<Vec<_>>()
-        .join("\n")
+        .collect::<Vec<_>>();
+    let hidden = session.plan.len().saturating_sub(rows.len());
+    (rows, hidden)
 }
 
-fn action_token(action: RebaseAction) -> &'static str {
-    match action {
-        RebaseAction::Pick => "pick",
-        RebaseAction::Reword => "reword",
-        RebaseAction::Edit => "edit",
-        RebaseAction::Squash => "squash",
-        RebaseAction::Fixup => "fixup",
-        RebaseAction::Drop => "drop",
+fn compact_end(value: &str, max_chars: usize) -> String {
+    let char_count = value.chars().count();
+    if char_count <= max_chars {
+        return value.to_string();
     }
+    if max_chars <= 3 {
+        return ".".repeat(max_chars);
+    }
+    let keep = max_chars - 3;
+    let head = value.chars().take(keep).collect::<String>();
+    format!("{head}...")
 }
 
 fn short_id(id: &str) -> String {
@@ -768,4 +774,105 @@ fn normalized_email(email: &str) -> Option<String> {
 
 fn emails_match(commit_email: &str, configured_email: &str) -> bool {
     normalized_email(commit_email).as_deref() == Some(configured_email)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use naite_core::{HistoryCommit, RefKind, RefSummary};
+
+    use super::*;
+
+    #[test]
+    fn rebase_prompt_preview_compacts_long_summary() {
+        let long_summary = "a".repeat(90);
+        let session = session_with_rows(vec![plan_row(
+            "abcdef1234567890",
+            RebaseAction::Drop,
+            &long_summary,
+        )]);
+
+        let (rows, hidden_count) = rebase_prompt_preview(&session);
+
+        assert_eq!(hidden_count, 0);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].summary.chars().count(),
+            REBASE_PROMPT_SUMMARY_MAX_CHARS
+        );
+        assert!(rows[0].summary.ends_with("..."));
+    }
+
+    #[test]
+    fn rebase_prompt_preview_limits_rows_and_counts_hidden() {
+        let rows = (0..10)
+            .map(|index| {
+                plan_row(
+                    &format!("{index:07}abcdef"),
+                    RebaseAction::Pick,
+                    &format!("commit {index}"),
+                )
+            })
+            .collect();
+        let session = session_with_rows(rows);
+
+        let (preview_rows, hidden_count) = rebase_prompt_preview(&session);
+
+        assert_eq!(preview_rows.len(), REBASE_PROMPT_PREVIEW_LIMIT);
+        assert_eq!(hidden_count, 2);
+    }
+
+    #[test]
+    fn rebase_prompt_preview_preserves_action_and_short_sha() {
+        let session = session_with_rows(vec![plan_row(
+            "1234567890abcdef",
+            RebaseAction::Reword,
+            "rewrite commit message",
+        )]);
+
+        let (rows, hidden_count) = rebase_prompt_preview(&session);
+
+        assert_eq!(hidden_count, 0);
+        assert_eq!(rows[0].action, RebaseAction::Reword);
+        assert_eq!(rows[0].short_id, "1234567");
+        assert_eq!(rows[0].summary, "rewrite commit message");
+    }
+
+    fn session_with_rows(plan: Vec<RebasePlanRow>) -> InteractiveRebaseSession {
+        InteractiveRebaseSession {
+            current_branch: ref_summary("feature"),
+            target: ref_summary("main"),
+            current_author_email: None,
+            plan,
+            selected: 0,
+            drag: None,
+            reword_drafts: HashMap::new(),
+            applying: false,
+            scroll_offset: 0.0,
+        }
+    }
+
+    fn plan_row(id: &str, action: RebaseAction, summary: &str) -> RebasePlanRow {
+        RebasePlanRow {
+            action,
+            commit: HistoryCommit {
+                id: id.into(),
+                summary: summary.into(),
+                author_name: "june".into(),
+                author_email: "june@example.com".into(),
+            },
+        }
+    }
+
+    fn ref_summary(name: &str) -> RefSummary {
+        RefSummary {
+            kind: RefKind::LocalBranch,
+            short_name: name.into(),
+            full_name: format!("refs/heads/{name}"),
+            target_short_id: "abc1234".into(),
+            is_head: false,
+            sync_status: None,
+        }
+    }
 }
