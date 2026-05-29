@@ -27,8 +27,8 @@ use state::ThemePreference;
 pub use app::{
     App, BranchDeletePrompt, BranchDeleteTarget, CheckoutPrompt, CommandId, CommandPaletteItem,
     DiscardPrompt, DiscardTarget, ForcePushPrompt, ForceSyncPrompt, HistoryPrompt,
-    LinkedWorktreeDeleteTarget, PaneId, RebasePrompt, ResetPrompt, StashPrompt, StashPromptAction,
-    TagDeletePrompt, UndoPrompt, UndoPromptAction, WorktreeRemovePrompt,
+    LinkedWorktreeDeleteTarget, PaneId, RebasePrompt, RebasePromptRow, ResetPrompt, StashPrompt,
+    StashPromptAction, TagDeletePrompt, UndoPrompt, UndoPromptAction, WorktreeRemovePrompt,
 };
 pub use message::Message;
 
