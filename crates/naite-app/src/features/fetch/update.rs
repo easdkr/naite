@@ -17,6 +17,9 @@ impl App {
                     return Task::none();
                 }
                 self.operation.auto_fetch_path = None;
+                if self.release_prep.auto_running {
+                    return self.continue_release_prep_auto();
+                }
                 if result.is_ok() && self.repo.path.as_ref() == Some(&path) {
                     if self.operation.loading {
                         Task::none()
