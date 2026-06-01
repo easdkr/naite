@@ -5104,6 +5104,54 @@ fn auto_fetch_done_failure_resumes_pending_release_prep_auto() {
 }
 
 #[test]
+fn auto_fetch_done_success_resumes_pending_release_prep_auto() {
+    let path = PathBuf::from("/tmp/naite");
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(path.clone()),
+            sync_status: BranchSyncStatus {
+                upstream: Some("origin/main".into()),
+                ahead: 0,
+                behind: 0,
+            },
+            ..Default::default()
+        },
+        operation: OperationState {
+            auto_fetch_path: Some(path.clone()),
+            ..Default::default()
+        },
+        release_prep: ReleasePrepState {
+            active_profile: Some(ReleaseProfile {
+                remote: "origin".into(),
+                source_branch: "staging".into(),
+                target_branch: "main".into(),
+            }),
+            phase: ReleasePrepPhase::Actions,
+            auto_running: true,
+            auto_next_action: Some(release_prep::ReleasePrepAction::UpdateTargetFromSource),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let _ = app.update(Message::from(fetch::Message::AutoDone {
+        path: path.clone(),
+        result: Ok(()),
+    }));
+
+    assert!(app.operation.auto_fetch_path.is_none());
+    assert!(!app.tabs.refreshing.contains(&path));
+    assert!(app.release_prep.auto_running);
+    assert_eq!(app.release_prep.auto_next_action, None);
+    assert_eq!(
+        app.release_prep.active_action,
+        Some(release_prep::ReleasePrepAction::UpdateTargetFromSource)
+    );
+    assert_eq!(app.release_prep.phase, ReleasePrepPhase::RunningAction);
+    assert!(app.operation.loading);
+}
+
+#[test]
 fn enabled_stash_command_closes_palette_and_opens_form() {
     let mut app = App {
         command_palette: CommandPaletteState {
