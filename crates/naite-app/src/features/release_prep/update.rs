@@ -6,6 +6,9 @@ use crate::features::repo_open;
 use crate::state::ReleasePrepPhase;
 use crate::{features::rebase::InteractiveRebaseSession, App, Message};
 
+pub(crate) const DIRTY_WORKTREE_RELEASE_ERROR: &str =
+    "Commit, stash, or resolve local changes first.";
+
 impl App {
     pub(crate) fn update_release_prep(&mut self, message: ReleasePrepMessage) -> Task<Message> {
         match message {
@@ -58,16 +61,19 @@ impl App {
         if self.operation.loading {
             return Task::none();
         }
-        if self.repo.status_detail.is_dirty() {
-            self.release_prep.error = Some("Commit, stash, or resolve local changes first.".into());
-            self.release_prep.phase = ReleasePrepPhase::Configuring;
-            self.release_prep.animation_frame = 0;
-            return Task::none();
-        }
 
         self.operation.error = None;
         self.operation.transient_status = None;
         self.release_prep.error = None;
+        if self.repo.status_detail.is_dirty() {
+            self.release_prep.error = Some(DIRTY_WORKTREE_RELEASE_ERROR.into());
+            self.release_prep.phase = ReleasePrepPhase::Preparing;
+            self.release_prep.animation_frame = 0;
+            self.operation.loading = true;
+            return Task::perform(release_prep::task::load_suggestion(path), |result| {
+                Message::from(ReleasePrepMessage::SuggestionLoaded(result))
+            });
+        }
         if let Some(profile) = self.preferences.release_profiles.get(&path).cloned() {
             self.release_prep.remote = profile.remote.clone();
             self.release_prep.source_branch = profile.source_branch.clone();
@@ -90,11 +96,12 @@ impl App {
         self.operation.loading = false;
         match result {
             Ok(suggestion) => {
+                let pending_error = self.release_prep.error.take();
                 self.release_prep.remote = suggestion.default_profile.remote.clone();
                 self.release_prep.source_branch = suggestion.default_profile.source_branch.clone();
                 self.release_prep.target_branch = suggestion.default_profile.target_branch.clone();
                 self.release_prep.backup_before_rebase = false;
-                self.release_prep.error = None;
+                self.release_prep.error = pending_error;
                 self.release_prep.suggestion = Some(suggestion);
                 self.release_prep.phase = ReleasePrepPhase::Configuring;
                 self.release_prep.animation_frame = 0;

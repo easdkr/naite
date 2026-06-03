@@ -13,9 +13,9 @@ use iced::window;
 use naite_core::{
     BranchSyncStatus, ChangeStatus, CommitAuthorAvatar, CommitDiff, CommitPage, CommitPageCursor,
     CommitSummary, DiffLine, FileChange, GitOperationState, HistoryCommit, Hunk, RebaseAction,
-    RefKind, RefSummary, Refs, ReleaseBranchSync, ReleaseProfile, ReleaseSyncCheck, StashSummary,
-    StatusEntry, StatusKind, WorkspaceRepoSummary, WorktreeDiffKind, WorktreeDiffTarget,
-    WorktreeStatus, WorktreeStatusDetail, WorktreeSummary,
+    RefKind, RefSummary, Refs, ReleaseBranchSync, ReleaseProfile, ReleaseProfileSuggestion,
+    ReleaseSyncCheck, StashSummary, StatusEntry, StatusKind, WorkspaceRepoSummary,
+    WorktreeDiffKind, WorktreeDiffTarget, WorktreeStatus, WorktreeStatusDetail, WorktreeSummary,
 };
 
 use crate::features::commit::CommitOutcome;
@@ -4591,6 +4591,68 @@ fn production_release_prep_ignores_cached_busy_state_before_fresh_task_check() {
     assert_eq!(app.release_prep.phase, ReleasePrepPhase::Preparing);
     assert!(app.operation.loading);
     assert_eq!(app.operation.error, None);
+}
+
+#[test]
+fn production_release_prep_dirty_repo_loads_branch_suggestions_for_dropdowns() {
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(PathBuf::from("/tmp/naite")),
+            status_detail: dirty_status_detail(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let _ = app.update(Message::from(release_prep::Message::Requested));
+
+    assert_eq!(app.release_prep.phase, ReleasePrepPhase::Preparing);
+    assert_eq!(
+        app.release_prep.error.as_deref(),
+        Some(release_prep::update::DIRTY_WORKTREE_RELEASE_ERROR)
+    );
+    assert!(app.operation.loading);
+}
+
+#[test]
+fn production_release_prep_suggestion_preserves_dirty_repo_error() {
+    let mut app = App {
+        release_prep: ReleasePrepState {
+            phase: ReleasePrepPhase::Preparing,
+            error: Some(release_prep::update::DIRTY_WORKTREE_RELEASE_ERROR.into()),
+            ..Default::default()
+        },
+        operation: OperationState {
+            loading: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let suggestion = ReleaseProfileSuggestion {
+        remotes: vec!["origin".into()],
+        source_candidates: vec!["staging".into()],
+        target_candidates: vec!["main".into()],
+        default_profile: ReleaseProfile {
+            remote: "origin".into(),
+            source_branch: "staging".into(),
+            target_branch: "main".into(),
+        },
+    };
+
+    let _ = app.update(Message::from(release_prep::Message::SuggestionLoaded(Ok(
+        suggestion,
+    ))));
+
+    assert_eq!(app.release_prep.phase, ReleasePrepPhase::Configuring);
+    assert!(!app.operation.loading);
+    assert_eq!(app.release_prep.remote, "origin");
+    assert_eq!(app.release_prep.source_branch, "staging");
+    assert_eq!(app.release_prep.target_branch, "main");
+    assert_eq!(
+        app.release_prep.error.as_deref(),
+        Some(release_prep::update::DIRTY_WORKTREE_RELEASE_ERROR)
+    );
+    assert!(app.release_prep.suggestion.is_some());
 }
 
 #[test]

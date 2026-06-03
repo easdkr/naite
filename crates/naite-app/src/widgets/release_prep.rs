@@ -13,6 +13,7 @@ const PROGRESS_SEGMENT_WIDTH: f32 = 92.0;
 
 pub fn release_prep_config(state: &ReleasePrepState, loading: bool) -> Element<'_, Message> {
     let can_submit = !loading
+        && !release_error_blocks_submit(state.error.as_deref())
         && !state.remote.trim().is_empty()
         && !state.source_branch.trim().is_empty()
         && !state.target_branch.trim().is_empty()
@@ -597,6 +598,14 @@ fn release_error_message(error: &str) -> String {
     error.to_string()
 }
 
+fn release_error_blocks_submit(error: Option<&str>) -> bool {
+    matches!(
+        error,
+        Some(crate::features::release_prep::update::DIRTY_WORKTREE_RELEASE_ERROR)
+            | Some("worktree has local changes")
+    )
+}
+
 fn profile_label(profile: &ReleaseProfile) -> String {
     format!(
         "{} / {} -> {}",
@@ -637,5 +646,19 @@ mod tests {
             "Git could not complete this release step. Resolve the Git error below before retrying.\n\n\
              git command failed: git checkout staging: fatal: 'staging' is already checked out at '/tmp/staging-worktree'"
         );
+    }
+
+    #[test]
+    fn release_error_blocks_submit_for_dirty_worktree_only() {
+        assert!(release_error_blocks_submit(Some(
+            crate::features::release_prep::update::DIRTY_WORKTREE_RELEASE_ERROR
+        )));
+        assert!(release_error_blocks_submit(Some(
+            "worktree has local changes"
+        )));
+        assert!(!release_error_blocks_submit(Some(
+            "git command failed: git checkout staging"
+        )));
+        assert!(!release_error_blocks_submit(None));
     }
 }
