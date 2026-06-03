@@ -346,7 +346,7 @@ impl App {
         }
     }
 
-    fn load_provider_commit_author_avatars(&self, path: PathBuf) -> Task<Message> {
+    pub(crate) fn load_provider_commit_author_avatars(&self, path: PathBuf) -> Task<Message> {
         let commit_ids: Vec<String> = self
             .repo
             .commits

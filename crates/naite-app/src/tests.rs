@@ -556,6 +556,41 @@ fn cached_tab_activation_starts_terminal_session_when_panel_is_open() {
 }
 
 #[test]
+fn cached_tab_activation_prefetches_known_commit_avatars() {
+    let active_path = PathBuf::from("/tmp/naite-active");
+    let cached_path = PathBuf::from("/tmp/naite-cached");
+    let avatar_url = "https://avatars.githubusercontent.com/u/1?v=4".to_string();
+    let mut cached_commit = commit("b222222", "update graph", "octocat");
+    cached_commit.author_avatar_url = Some(avatar_url.clone());
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(active_path.clone()),
+            head_branch: Some("main".into()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    app.tabs.open = vec![active_path.clone(), cached_path.clone()];
+    app.tabs.active = Some(active_path);
+    app.tabs
+        .last_refreshed
+        .insert(cached_path.clone(), Instant::now());
+    app.tabs.cache.insert(
+        cached_path.clone(),
+        RepositoryState {
+            path: Some(cached_path.clone()),
+            commits: vec![cached_commit],
+            head_branch: Some("feature/cached".into()),
+            ..Default::default()
+        },
+    );
+
+    let _ = app.update(Message::from(TabsMessage::Activate(cached_path)));
+
+    assert!(app.avatars.in_flight.contains(&avatar_url));
+}
+
+#[test]
 fn closing_active_tab_starts_new_active_terminal_session_when_panel_is_open() {
     let active_path = PathBuf::from("/tmp/naite-active");
     let cached_path = PathBuf::from("/tmp/naite-cached");
@@ -585,6 +620,47 @@ fn closing_active_tab_starts_new_active_terminal_session_when_panel_is_open() {
     assert_eq!(session.target.cwd, cached_path);
     assert_eq!(session.status, TerminalStatus::Starting);
     assert!(session.pending_start);
+}
+
+#[test]
+fn tab_refresh_prefetches_preserved_commit_avatars_for_active_tab() {
+    let path = PathBuf::from("/tmp/naite");
+    let provider_avatar_url = "https://avatars.githubusercontent.com/u/1?v=4".to_string();
+    let mut existing = commit("a111111", "add app shell", "octocat");
+    existing.author_avatar_url = Some(provider_avatar_url.clone());
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(path.clone()),
+            commits: vec![existing],
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    app.tabs.active = Some(path.clone());
+    app.tabs.refreshing.insert(path.clone());
+
+    let fresh = commit("b222222", "update graph", "octocat");
+    let _ = app.update(Message::from(TabsMessage::RefreshDone {
+        path: path.clone(),
+        result: Box::new(Ok((
+            path,
+            vec![fresh],
+            None,
+            Refs::default(),
+            vec![],
+            vec![],
+            Some("main".into()),
+            WorktreeStatusDetail::default(),
+            BranchSyncStatus::default(),
+            GitOperationState::default(),
+        ))),
+    }));
+
+    assert_eq!(
+        app.repo.commits[0].author_avatar_url.as_deref(),
+        Some(provider_avatar_url.as_str())
+    );
+    assert!(app.avatars.in_flight.contains(&provider_avatar_url));
 }
 
 #[test]

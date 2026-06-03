@@ -1251,7 +1251,7 @@ impl App {
                     };
 
                     let refresh_task = if self.should_refresh_tab(&target) {
-                        self.spawn_tab_refresh(target)
+                        self.spawn_tab_refresh(target.clone())
                     } else {
                         Task::none()
                     };
@@ -1260,11 +1260,16 @@ impl App {
                     } else {
                         Task::none()
                     };
+                    let commit_avatar_task = self.prefetch_commit_avatars();
+                    let provider_commit_avatar_task =
+                        self.load_provider_commit_author_avatars(target);
                     Task::batch([
                         self.save_open_tabs(),
                         terminal_task,
                         refresh_task,
                         select_task,
+                        commit_avatar_task,
+                        provider_commit_avatar_task,
                     ])
                 } else {
                     self.update(Message::from(repo_open::Message::OpenRecent(target)))
@@ -1298,7 +1303,7 @@ impl App {
                         };
 
                         let refresh_task = if self.should_refresh_tab(&new_active) {
-                            self.spawn_tab_refresh(new_active)
+                            self.spawn_tab_refresh(new_active.clone())
                         } else {
                             Task::none()
                         };
@@ -1307,11 +1312,16 @@ impl App {
                         } else {
                             Task::none()
                         };
+                        let commit_avatar_task = self.prefetch_commit_avatars();
+                        let provider_commit_avatar_task =
+                            self.load_provider_commit_author_avatars(new_active);
                         Task::batch([
                             self.save_open_tabs(),
                             terminal_task,
                             refresh_task,
                             select_task,
+                            commit_avatar_task,
+                            provider_commit_avatar_task,
                         ])
                     } else {
                         self.repo = RepositoryState::default();
@@ -1398,6 +1408,10 @@ impl App {
 
                         if is_active {
                             self.refresh_graph_layout();
+                            return Task::batch([
+                                self.prefetch_commit_avatars(),
+                                self.load_provider_commit_author_avatars(path),
+                            ]);
                         }
                         Task::none()
                     }
