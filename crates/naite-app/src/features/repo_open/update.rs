@@ -5,6 +5,7 @@ use iced::Task;
 
 use crate::features::repo_open::{self, Message as RepoOpenMessage};
 use crate::message::TabsMessage;
+use crate::persistence;
 use crate::state::ReleasePrepState;
 use crate::{App, Message};
 
@@ -250,11 +251,22 @@ impl App {
                 };
 
                 let mut urls = Vec::new();
+                let mut cached_avatar_urls = persistence::load_avatar_urls().unwrap_or_default();
+                let mut cache_changed = false;
                 for commit in &mut target_state.commits {
                     if let Some(url) = by_commit.get(&commit.id) {
                         commit.author_avatar_url = Some(url.clone());
                         urls.push(url.clone());
+                        if let Some(key) = Self::commit_author_avatar_key(commit) {
+                            if cached_avatar_urls.get(&key) != Some(url) {
+                                cached_avatar_urls.insert(key, url.clone());
+                                cache_changed = true;
+                            }
+                        }
                     }
+                }
+                if cache_changed {
+                    let _ = persistence::save_avatar_urls(&cached_avatar_urls);
                 }
 
                 Task::batch(

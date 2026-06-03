@@ -50,6 +50,10 @@ fn preferences_file_path() -> Result<PathBuf, String> {
     Ok(naite_data_dir()?.join("preferences.tsv"))
 }
 
+fn avatar_urls_file_path() -> Result<PathBuf, String> {
+    Ok(naite_data_dir()?.join("avatar_urls.tsv"))
+}
+
 fn naite_data_dir() -> Result<PathBuf, String> {
     let home = std::env::var_os("HOME").ok_or_else(|| "HOME is not set".to_string())?;
     Ok(PathBuf::from(home)
@@ -101,6 +105,39 @@ pub fn save_avatar_bytes(url: &str, bytes: &[u8]) -> Result<(), String> {
     }
     fs::write(&path, bytes)
         .map_err(|err| format!("failed to write avatar cache at {}: {err}", path.display()))
+}
+
+pub fn load_avatar_urls() -> Result<std::collections::HashMap<String, String>, String> {
+    let path = avatar_urls_file_path()?;
+    match fs::read_to_string(&path) {
+        Ok(raw) => Ok(parse_avatar_urls(&raw)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            Ok(std::collections::HashMap::new())
+        }
+        Err(err) => Err(format!(
+            "failed to read avatar URL cache at {}: {err}",
+            path.display()
+        )),
+    }
+}
+
+pub fn save_avatar_urls(entries: &std::collections::HashMap<String, String>) -> Result<(), String> {
+    let path = avatar_urls_file_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|err| {
+            format!(
+                "failed to create avatar URL cache directory {}: {err}",
+                parent.display()
+            )
+        })?;
+    }
+
+    fs::write(&path, serialize_avatar_urls(entries)).map_err(|err| {
+        format!(
+            "failed to write avatar URL cache at {}: {err}",
+            path.display()
+        )
+    })
 }
 
 /// Snapshot of persisted tab state. `open` is in display order; the first
@@ -193,6 +230,44 @@ fn parse_open_tabs(raw: &str) -> OpenTabsSnapshot {
         open.push(path.to_path_buf());
     }
     OpenTabsSnapshot { open }
+}
+
+fn serialize_avatar_urls(entries: &std::collections::HashMap<String, String>) -> String {
+    let mut rows = entries
+        .iter()
+        .filter(|(key, url)| {
+            !key.trim().is_empty()
+                && !url.trim().is_empty()
+                && !key.contains(['\t', '\n', '\r'])
+                && !url.contains(['\t', '\n', '\r'])
+        })
+        .collect::<Vec<_>>();
+    rows.sort_by_key(|(key, _)| *key);
+
+    let mut out = String::new();
+    for (key, url) in rows {
+        out.push_str(key);
+        out.push('\t');
+        out.push_str(url);
+        out.push('\n');
+    }
+    out
+}
+
+fn parse_avatar_urls(raw: &str) -> std::collections::HashMap<String, String> {
+    let mut entries = std::collections::HashMap::new();
+    for line in raw.lines() {
+        let Some((key, url)) = line.split_once('\t') else {
+            continue;
+        };
+        let key = key.trim();
+        let url = url.trim();
+        if key.is_empty() || url.is_empty() {
+            continue;
+        }
+        entries.insert(key.to_string(), url.to_string());
+    }
+    entries
 }
 
 fn serialize_preferences(preferences: &PreferencesState) -> String {
@@ -403,6 +478,33 @@ mod tests {
         assert_eq!(parsed.entries.len(), 1);
         assert_eq!(parsed.entries[0].path, PathBuf::from("/tmp/repo"));
         assert!(parsed.entries[0].favorite);
+    }
+
+    #[test]
+    fn avatar_urls_round_trip_sorted_and_skips_malformed_rows() {
+        let mut entries = std::collections::HashMap::new();
+        entries.insert(
+            "email:octocat@example.com".to_string(),
+            "https://avatars.githubusercontent.com/u/1?v=4".to_string(),
+        );
+        entries.insert(
+            "bad\tkey".to_string(),
+            "https://example.com/bad.png".to_string(),
+        );
+        entries.insert("empty-url".to_string(), String::new());
+
+        let raw = serialize_avatar_urls(&entries);
+        let parsed = parse_avatar_urls(&format!("{raw}malformed\n\tmissing-key\n"));
+
+        assert_eq!(
+            raw,
+            "email:octocat@example.com\thttps://avatars.githubusercontent.com/u/1?v=4\n"
+        );
+        assert_eq!(
+            parsed.get("email:octocat@example.com").map(String::as_str),
+            Some("https://avatars.githubusercontent.com/u/1?v=4")
+        );
+        assert_eq!(parsed.len(), 1);
     }
 
     #[test]

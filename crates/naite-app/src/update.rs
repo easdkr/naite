@@ -422,25 +422,25 @@ impl App {
     }
 
     fn known_author_avatar_urls_for_path(&self, path: &Path) -> HashMap<String, String> {
+        let mut known = persistence::load_avatar_urls().unwrap_or_default();
         let source = if self.repo.path.as_deref() == Some(path) {
             Some(&self.repo)
         } else {
             self.tabs.cache.get(path)
         };
 
-        let mut known = HashMap::new();
         for commit in source.into_iter().flat_map(|repo| repo.commits.iter()) {
             if let (Some(key), Some(url)) = (
                 Self::commit_author_avatar_key(commit),
                 commit.author_avatar_url.as_ref(),
             ) {
-                known.entry(key).or_insert_with(|| url.clone());
+                known.insert(key, url.clone());
             }
         }
         known
     }
 
-    fn commit_author_avatar_key(commit: &CommitSummary) -> Option<String> {
+    pub(crate) fn commit_author_avatar_key(commit: &CommitSummary) -> Option<String> {
         let email = commit.author_email.trim();
         if !email.is_empty() {
             return Some(format!("email:{}", email.to_ascii_lowercase()));
