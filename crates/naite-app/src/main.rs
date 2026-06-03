@@ -2,6 +2,7 @@
 
 mod app;
 mod app_icon;
+mod env_path;
 mod error_display;
 mod features;
 mod icons;
@@ -33,6 +34,10 @@ pub use app::{
 pub use message::Message;
 
 fn main() -> iced::Result {
+    // Repair PATH before any threads spawn so GUI-launched naite can find CLIs
+    // (`gh`, `git`) installed outside the minimal launchd environment.
+    env_path::augment_process_path();
+
     let initial_repo = initial_repository_path();
     let preferences = persistence::load_preferences().unwrap_or_default();
 

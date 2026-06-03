@@ -210,8 +210,29 @@ impl App {
                     return Task::none();
                 }
 
-                let Ok(avatars) = result else {
-                    return Task::none();
+                let avatars = match result {
+                    Ok(avatars) => avatars,
+                    Err(err) => {
+                        // The missing-CLI notice is one-shot per session (the
+                        // `gh` binary's presence doesn't change mid-session, so
+                        // every avatar load / pagination would otherwise re-toast).
+                        // Other provider errors are transient and reported as-is.
+                        if err.contains("could not find") {
+                            if !self.provider_cli_notice_shown {
+                                self.provider_cli_notice_shown = true;
+                                self.set_transient_status(
+                                    "GitHub CLI(gh)를 찾을 수 없어 아바타 대신 이니셜을 표시합니다. \
+                                     gh를 설치하면 아바타가 표시됩니다."
+                                        .to_string(),
+                                );
+                            }
+                        } else {
+                            self.set_transient_status(format!(
+                                "GitHub 아바타를 불러오지 못했습니다: {err}"
+                            ));
+                        }
+                        return Task::none();
+                    }
                 };
                 let by_commit: HashMap<String, String> = avatars
                     .into_iter()

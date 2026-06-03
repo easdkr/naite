@@ -73,6 +73,10 @@ pub struct App {
     /// the first `on_scroll` event arrives; in that case we fall back to
     /// anchoring the selected row at the top.
     pub(crate) commit_list_viewport_height: f32,
+    /// Set once a provider-CLI failure (e.g. `gh` not found) has been surfaced
+    /// to the user, so the transient notice isn't re-shown on every avatar
+    /// load / pagination during the session.
+    pub(crate) provider_cli_notice_shown: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -390,6 +394,7 @@ impl App {
             window_height: 760.0,
             commit_list_scroll_y: 0.0,
             commit_list_viewport_height: 0.0,
+            provider_cli_notice_shown: false,
         }
     }
     pub(crate) fn visible_commit_indices(&self) -> Vec<usize> {
