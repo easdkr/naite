@@ -358,8 +358,10 @@ impl App {
                             .unwrap_or_else(|| iced::widget::image::Handle::from_bytes(data));
                         self.avatars.handles.insert(url, handle);
                     }
-                    Err(_) => {
-                        self.avatars.failed.insert(url);
+                    Err(err) => {
+                        if is_permanent_avatar_fetch_failure(&err) {
+                            self.avatars.failed.insert(url);
+                        }
                     }
                 }
                 Task::none()
@@ -367,9 +369,9 @@ impl App {
         }
     }
 
-    /// Kick off an avatar fetch for `url` if it hasn't been cached, failed,
-    /// or already requested. Returns `Task::none()` when no work is needed
-    /// so callers can compose it with other tasks freely.
+    /// Kick off an avatar fetch for `url` if it hasn't been cached,
+    /// permanently failed, or already requested. Returns `Task::none()` when
+    /// no work is needed so callers can compose it with other tasks freely.
     pub(crate) fn maybe_fetch_avatar(&mut self, url: Option<&str>) -> Task<Message> {
         let Some(url) = url else {
             return Task::none();
@@ -1453,6 +1455,10 @@ impl App {
             Message::from(TabsMessage::Saved(result))
         })
     }
+}
+
+fn is_permanent_avatar_fetch_failure(err: &str) -> bool {
+    matches!(err.trim(), "HTTP 404" | "HTTP 410")
 }
 
 fn circular_avatar_handle(data: &[u8]) -> Option<iced::widget::image::Handle> {

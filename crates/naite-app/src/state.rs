@@ -611,8 +611,8 @@ impl Default for GitHubIssuesState {
 }
 
 /// Session-scoped cache of fetched avatar bitmaps keyed by source URL.
-/// Tracks in-flight URLs to avoid duplicate fetches, and failed URLs to
-/// avoid hot-looping on broken responses.
+/// Tracks in-flight URLs to avoid duplicate fetches, and permanently failed
+/// URLs to avoid hot-looping on broken responses.
 #[derive(Debug, Clone, Default)]
 pub struct AvatarCache {
     pub handles: HashMap<String, iced::widget::image::Handle>,

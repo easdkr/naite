@@ -756,6 +756,22 @@ fn avatar_fetched_updates_cache_success_and_failure_state() {
 }
 
 #[test]
+fn transient_avatar_fetch_failure_can_be_retried() {
+    let mut app = App::default();
+    let url = "https://github.com/octocat.png?size=40".to_string();
+    app.avatars.in_flight.insert(url.clone());
+
+    let _ = app.update(Message::AvatarFetched {
+        url: url.clone(),
+        bytes: Err("operation timed out".into()),
+    });
+
+    assert!(!app.avatars.in_flight.contains(&url));
+    assert!(!app.avatars.failed.contains(&url));
+    assert!(app.avatars.needs_fetch(&url));
+}
+
+#[test]
 fn repo_reload_reuses_known_provider_avatar_url_by_author() {
     let mut app = App::default();
     let path = PathBuf::from("/tmp/naite");
