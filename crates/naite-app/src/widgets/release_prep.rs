@@ -590,7 +590,9 @@ fn release_error_message(error: &str) -> String {
         return "Could not fetch the latest remote branches. Check repository access or network state, then retry release promotion.".into();
     }
     if error.starts_with("git command failed:") {
-        return "Git could not complete this release step. Check the branch and worktree state, then retry release promotion.".into();
+        return format!(
+            "Git could not complete this release step. Resolve the Git error below before retrying.\n\n{error}"
+        );
     }
     error.to_string()
 }
@@ -623,6 +625,17 @@ mod tests {
         assert_eq!(
             release_error_message(raw),
             crate::error_display::GIT_INDEX_LOCK_MESSAGE
+        );
+    }
+
+    #[test]
+    fn release_error_message_preserves_non_fetch_git_details() {
+        let raw = "git command failed: git checkout staging: fatal: 'staging' is already checked out at '/tmp/staging-worktree'";
+
+        assert_eq!(
+            release_error_message(raw),
+            "Git could not complete this release step. Resolve the Git error below before retrying.\n\n\
+             git command failed: git checkout staging: fatal: 'staging' is already checked out at '/tmp/staging-worktree'"
         );
     }
 }

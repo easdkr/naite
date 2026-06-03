@@ -4772,6 +4772,40 @@ fn production_release_prepare_applies_post_sync_repo_snapshot_before_rebase() {
 }
 
 #[test]
+fn production_release_prepare_failure_keeps_config_open_and_refreshes_repo_state() {
+    let path = PathBuf::from("/tmp/naite");
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(path),
+            ..Default::default()
+        },
+        release_prep: ReleasePrepState {
+            phase: ReleasePrepPhase::Preparing,
+            ..Default::default()
+        },
+        operation: OperationState {
+            loading: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let _ = app.update(Message::from(release_prep::Message::Prepared(Box::new(
+        Err(
+            "git command failed: git checkout staging: fatal: branch is checked out elsewhere"
+                .into(),
+        ),
+    ))));
+
+    assert_eq!(app.release_prep.phase, ReleasePrepPhase::Configuring);
+    assert_eq!(
+        app.release_prep.error.as_deref(),
+        Some("git command failed: git checkout staging: fatal: branch is checked out elsewhere")
+    );
+    assert!(app.operation.loading);
+}
+
+#[test]
 fn production_release_followup_commands_require_active_profile() {
     let app = App {
         repo: RepositoryState {

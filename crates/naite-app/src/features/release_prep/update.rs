@@ -190,7 +190,14 @@ impl App {
                 self.release_prep.phase = ReleasePrepPhase::Configuring;
                 self.release_prep.animation_frame = 0;
                 self.release_prep.error = Some(message);
-                Task::none()
+                if let Some(path) = self.repo.path.clone() {
+                    self.operation.loading = true;
+                    Task::perform(repo_open::task::load(path), |result| {
+                        Message::from(repo_open::Message::Loaded(Box::new(result)))
+                    })
+                } else {
+                    Task::none()
+                }
             }
         }
     }
