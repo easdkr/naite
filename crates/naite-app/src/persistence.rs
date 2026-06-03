@@ -50,6 +50,7 @@ fn preferences_file_path() -> Result<PathBuf, String> {
     Ok(naite_data_dir()?.join("preferences.tsv"))
 }
 
+#[cfg(not(test))]
 fn avatar_urls_file_path() -> Result<PathBuf, String> {
     Ok(naite_data_dir()?.join("avatar_urls.tsv"))
 }
@@ -107,6 +108,12 @@ pub fn save_avatar_bytes(url: &str, bytes: &[u8]) -> Result<(), String> {
         .map_err(|err| format!("failed to write avatar cache at {}: {err}", path.display()))
 }
 
+#[cfg(test)]
+pub fn load_avatar_urls() -> Result<std::collections::HashMap<String, String>, String> {
+    Ok(std::collections::HashMap::new())
+}
+
+#[cfg(not(test))]
 pub fn load_avatar_urls() -> Result<std::collections::HashMap<String, String>, String> {
     let path = avatar_urls_file_path()?;
     match fs::read_to_string(&path) {
@@ -121,6 +128,14 @@ pub fn load_avatar_urls() -> Result<std::collections::HashMap<String, String>, S
     }
 }
 
+#[cfg(test)]
+pub fn save_avatar_urls(
+    _entries: &std::collections::HashMap<String, String>,
+) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(not(test))]
 pub fn save_avatar_urls(entries: &std::collections::HashMap<String, String>) -> Result<(), String> {
     let path = avatar_urls_file_path()?;
     if let Some(parent) = path.parent() {

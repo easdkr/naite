@@ -898,7 +898,8 @@ fn repo_reload_reuses_known_provider_avatar_url_by_author() {
     app.repo.path = Some(path.clone());
     app.repo.commits = vec![existing];
 
-    let fresh = commit("b222222", "update graph", "octocat");
+    let mut fresh = commit("b222222", "update graph", "octocat");
+    fresh.author_avatar_url = Some("https://github.com/octocat.png?size=128".into());
     let _ = app.update(Message::from(repo_open::Message::Loaded(Box::new(Ok((
         path,
         vec![fresh],

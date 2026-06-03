@@ -378,9 +378,13 @@ impl App {
         path: PathBuf,
         commits: &[naite_core::CommitSummary],
     ) -> Task<Message> {
+        let cached_avatar_urls = persistence::load_avatar_urls().unwrap_or_default();
         let commit_ids: Vec<String> = commits
             .iter()
-            .filter(|commit| commit.author_avatar_url.is_none())
+            .filter(|commit| {
+                Self::commit_author_avatar_key(commit)
+                    .is_none_or(|key| !cached_avatar_urls.contains_key(&key))
+            })
             .map(|commit| commit.id.clone())
             .collect();
         if commit_ids.is_empty() {

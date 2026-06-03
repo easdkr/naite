@@ -413,9 +413,9 @@ impl App {
         }
 
         for commit in commits {
-            if commit.author_avatar_url.is_none() {
-                if let Some(key) = Self::commit_author_avatar_key(commit) {
-                    commit.author_avatar_url = known.get(&key).cloned();
+            if let Some(key) = Self::commit_author_avatar_key(commit) {
+                if let Some(url) = known.get(&key) {
+                    commit.author_avatar_url = Some(url.clone());
                 }
             }
         }
