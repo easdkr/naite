@@ -8,6 +8,19 @@ pub struct ReleaseProfile {
     pub remote: String,
     pub source_branch: String,
     pub target_branch: String,
+    /// Optional shell command run (via `sh -c`) against the target branch
+    /// before it is pushed. Non-zero exit blocks the push. `None` disables
+    /// validation.
+    pub validation_script: Option<String>,
+}
+
+impl ReleaseProfile {
+    /// True when a non-empty validation script is configured.
+    pub fn has_validation_script(&self) -> bool {
+        self.validation_script
+            .as_deref()
+            .is_some_and(|script| !script.trim().is_empty())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,6 +107,7 @@ impl Repository {
                 remote,
                 source_branch,
                 target_branch,
+                validation_script: None,
             },
         })
     }
@@ -158,6 +172,35 @@ impl Repository {
         }
         let _ = self.git(&["checkout", &profile.target_branch])?;
         let _ = self.git(&["merge", "--ff-only", &profile.source_branch])?;
+        Ok(())
+    }
+
+    pub fn validate_release_target(&self, profile: &ReleaseProfile) -> Result<(), Error> {
+        validate_release_profile(profile)?;
+        let Some(script) = profile
+            .validation_script
+            .as_deref()
+            .map(str::trim)
+            .filter(|script| !script.is_empty())
+        else {
+            return Ok(());
+        };
+        if self.status()?.is_dirty() {
+            return Err(Error::DirtyWorkdir);
+        }
+        // Guided mode allows running steps out of order, so make sure the
+        // script always validates the target branch tree it gates.
+        let _ = self.git(&["checkout", &profile.target_branch])?;
+        let cwd = self.workdir().unwrap_or(self.path());
+        let _ = crate::command::run_validation_script(
+            script,
+            cwd,
+            &[
+                ("NAITE_REMOTE", profile.remote.as_str()),
+                ("NAITE_SOURCE_BRANCH", profile.source_branch.as_str()),
+                ("NAITE_TARGET_BRANCH", profile.target_branch.as_str()),
+            ],
+        )?;
         Ok(())
     }
 
@@ -419,6 +462,7 @@ mod tests {
             remote: "origin".into(),
             source_branch: "staging".into(),
             target_branch: "main".into(),
+            validation_script: None,
         };
 
         assert!(repo.check_release_sync(&profile).unwrap().is_ready());
@@ -492,6 +536,7 @@ mod tests {
             remote: "origin".into(),
             source_branch: "staging".into(),
             target_branch: "main".into(),
+            validation_script: None,
         };
         repo.fetch_release_remote("origin").unwrap();
 
@@ -514,6 +559,93 @@ mod tests {
                 .unwrap()
                 .trim()
         );
+    }
+
+    #[test]
+    fn validate_release_target_runs_script_with_env_on_target_branch() {
+        let source = TempRepo::init_with_commit("release-validate-pass");
+        source.git(&["branch", "-M", "main"]);
+        source.git(&["checkout", "-b", "staging"]);
+
+        let repo = Repository::open(&source.path).unwrap();
+        let profile = ReleaseProfile {
+            remote: "origin".into(),
+            source_branch: "staging".into(),
+            target_branch: "main".into(),
+            validation_script: Some(
+                "test \"$NAITE_REMOTE\" = origin \
+                 && test \"$NAITE_SOURCE_BRANCH\" = staging \
+                 && test \"$NAITE_TARGET_BRANCH\" = main \
+                 && test \"$(git rev-parse --abbrev-ref HEAD)\" = main"
+                    .into(),
+            ),
+        };
+
+        // Starts on staging; the op must check out the target branch before
+        // running the script, which asserts HEAD and the env vars.
+        repo.validate_release_target(&profile).unwrap();
+    }
+
+    #[test]
+    fn validate_release_target_blocks_on_nonzero_exit() {
+        let source = TempRepo::init_with_commit("release-validate-fail");
+        source.git(&["branch", "-M", "main"]);
+
+        let repo = Repository::open(&source.path).unwrap();
+        let script = "echo failing-check 1>&2; exit 1";
+        let profile = ReleaseProfile {
+            remote: "origin".into(),
+            source_branch: "staging".into(),
+            target_branch: "main".into(),
+            validation_script: Some(script.into()),
+        };
+
+        match repo.validate_release_target(&profile) {
+            Err(Error::ProviderCommand { command, stderr }) => {
+                assert_eq!(command, script);
+                assert!(stderr.contains("failing-check"), "{stderr}");
+            }
+            other => panic!("expected provider command error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_release_target_rejects_dirty_worktree() {
+        let source = TempRepo::init_with_commit("release-validate-dirty");
+        source.git(&["branch", "-M", "main"]);
+        source.write("file.txt", "changed\n");
+
+        let repo = Repository::open(&source.path).unwrap();
+        let profile = ReleaseProfile {
+            remote: "origin".into(),
+            source_branch: "staging".into(),
+            target_branch: "main".into(),
+            validation_script: Some("true".into()),
+        };
+
+        assert!(matches!(
+            repo.validate_release_target(&profile),
+            Err(Error::DirtyWorkdir)
+        ));
+    }
+
+    #[test]
+    fn validate_release_target_skips_without_script_even_when_dirty() {
+        let source = TempRepo::init_with_commit("release-validate-skip");
+        source.git(&["branch", "-M", "main"]);
+        source.write("file.txt", "changed\n");
+
+        let repo = Repository::open(&source.path).unwrap();
+        for script in [None, Some("   ".to_string())] {
+            let profile = ReleaseProfile {
+                remote: "origin".into(),
+                source_branch: "staging".into(),
+                target_branch: "main".into(),
+                validation_script: script,
+            };
+
+            repo.validate_release_target(&profile).unwrap();
+        }
     }
 
     #[test]
@@ -540,6 +672,7 @@ mod tests {
             remote: "origin".into(),
             source_branch: "staging".into(),
             target_branch: "main".into(),
+            validation_script: None,
         };
 
         // Simulate the release review dropping the pending commit locally before

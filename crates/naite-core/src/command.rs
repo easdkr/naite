@@ -80,6 +80,64 @@ where
     }
 }
 
+/// Maximum number of characters of script output preserved in a validation
+/// failure error. Chatty scripts keep only the tail, which is where build and
+/// test tools print their failure summary.
+const VALIDATION_OUTPUT_TAIL_CHARS: usize = 2000;
+
+pub(crate) fn run_validation_script(
+    script: &str,
+    cwd: &Path,
+    envs: &[(&str, &str)],
+) -> Result<String, Error> {
+    let command = script.to_string();
+    let mut cmd = Command::new("sh");
+    cmd.arg("-c").arg(script).current_dir(cwd);
+    for (key, value) in envs {
+        cmd.env(key, value);
+    }
+
+    let output = cmd.output().map_err(|source| {
+        if source.kind() == std::io::ErrorKind::NotFound {
+            Error::ProviderCliNotFound {
+                program: "sh".to_string(),
+            }
+        } else {
+            Error::ProviderCommand {
+                command: command.clone(),
+                stderr: source.to_string(),
+            }
+        }
+    })?;
+
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stderr = if stderr.is_empty() {
+            String::from_utf8_lossy(&output.stdout).trim().to_string()
+        } else {
+            stderr
+        };
+        Err(Error::ProviderCommand {
+            command,
+            stderr: output_tail(&stderr),
+        })
+    }
+}
+
+fn output_tail(output: &str) -> String {
+    let total = output.chars().count();
+    if total <= VALIDATION_OUTPUT_TAIL_CHARS {
+        return output.to_string();
+    }
+    let tail: String = output
+        .chars()
+        .skip(total - VALIDATION_OUTPUT_TAIL_CHARS)
+        .collect();
+    format!("…{tail}")
+}
+
 pub(crate) fn run_git_with_env<I, S, K, V>(
     cwd: &Path,
     args: I,
@@ -283,6 +341,54 @@ mod tests {
         let command = format_command("gh", &[OsString::from("pr"), OsString::from("list")]);
 
         assert_eq!(command, "gh pr list");
+    }
+
+    #[test]
+    fn validation_script_returns_stdout_on_success() {
+        let dir = TempRepo::new("command-validation-success");
+
+        let output = run_validation_script("echo hello", &dir.path, &[]).unwrap();
+
+        assert_eq!(output.trim(), "hello");
+    }
+
+    #[test]
+    fn validation_script_returns_stderr_tail_on_failure() {
+        let dir = TempRepo::new("command-validation-failure");
+
+        let result = run_validation_script("echo boom 1>&2; exit 3", &dir.path, &[]);
+
+        match result {
+            Err(Error::ProviderCommand { command, stderr }) => {
+                assert_eq!(command, "echo boom 1>&2; exit 3");
+                assert!(stderr.contains("boom"), "{stderr}");
+            }
+            other => panic!("expected provider command error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validation_script_exposes_env_vars_and_cwd() {
+        let dir = TempRepo::new("command-validation-env");
+        dir.write("marker.txt", "present\n");
+
+        let result = run_validation_script(
+            "test \"$NAITE_TARGET_BRANCH\" = main && test -f marker.txt",
+            &dir.path,
+            &[("NAITE_TARGET_BRANCH", "main")],
+        );
+
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[test]
+    fn output_tail_keeps_short_output_and_truncates_long_output() {
+        assert_eq!(output_tail("short"), "short");
+
+        let long = "x".repeat(VALIDATION_OUTPUT_TAIL_CHARS + 10);
+        let tail = output_tail(&long);
+        assert!(tail.starts_with('…'));
+        assert_eq!(tail.chars().count(), VALIDATION_OUTPUT_TAIL_CHARS + 1);
     }
 
     #[test]

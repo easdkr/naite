@@ -13,6 +13,7 @@ impl App {
     pub(crate) fn update_release_prep(&mut self, message: ReleasePrepMessage) -> Task<Message> {
         match message {
             ReleasePrepMessage::Requested => self.start_release_prep(),
+            ReleasePrepMessage::ConfigureRequested => self.start_release_prep_configure(),
             ReleasePrepMessage::SuggestionLoaded(result) => self.open_release_prep_config(result),
             ReleasePrepMessage::RemoteChanged(value) => {
                 self.release_prep.remote = value;
@@ -29,6 +30,12 @@ impl App {
                 self.release_prep.error = None;
                 Task::none()
             }
+            ReleasePrepMessage::ValidationScriptChanged(value) => {
+                self.release_prep.validation_script = value;
+                self.release_prep.error = None;
+                self.sync_active_release_validation_script();
+                Task::none()
+            }
             ReleasePrepMessage::BackupToggled(value) => {
                 self.release_prep.backup_before_rebase = value;
                 Task::none()
@@ -37,12 +44,18 @@ impl App {
                 if self.release_prep.auto_running {
                     return Task::none();
                 }
+                // Keep script edits made in the actions modal across sessions.
+                let save = if self.release_prep.phase == ReleasePrepPhase::Actions {
+                    self.persist_active_release_profile_if_changed()
+                } else {
+                    Task::none()
+                };
                 self.release_prep.phase = ReleasePrepPhase::Idle;
                 self.release_prep.auto_running = false;
                 self.release_prep.auto_next_action = None;
                 self.release_prep.active_action = None;
                 self.release_prep.completed_actions.clear();
-                Task::none()
+                save
             }
             ReleasePrepMessage::ProfileSubmitted => self.submit_release_prep_profile(),
             ReleasePrepMessage::Prepared(result) => self.finish_release_prepare(*result),
@@ -78,6 +91,8 @@ impl App {
             self.release_prep.remote = profile.remote.clone();
             self.release_prep.source_branch = profile.source_branch.clone();
             self.release_prep.target_branch = profile.target_branch.clone();
+            self.release_prep.validation_script =
+                profile.validation_script.clone().unwrap_or_default();
             self.begin_release_prepare(path, profile, self.release_prep.backup_before_rebase)
         } else {
             self.release_prep.phase = ReleasePrepPhase::Preparing;
@@ -89,17 +104,50 @@ impl App {
         }
     }
 
+    fn start_release_prep_configure(&mut self) -> Task<Message> {
+        let Some(path) = self.repo.path.clone() else {
+            return Task::none();
+        };
+        if self.operation.loading || self.release_prep.auto_running {
+            return Task::none();
+        }
+
+        self.operation.error = None;
+        self.operation.transient_status = None;
+        self.release_prep.error = None;
+        self.release_prep.force_config = true;
+        self.release_prep.phase = ReleasePrepPhase::Preparing;
+        self.release_prep.animation_frame = 0;
+        self.operation.loading = true;
+        Task::perform(release_prep::task::load_suggestion(path), |result| {
+            Message::from(ReleasePrepMessage::SuggestionLoaded(result))
+        })
+    }
+
     fn open_release_prep_config(
         &mut self,
         result: Result<naite_core::ReleaseProfileSuggestion, String>,
     ) -> Task<Message> {
         self.operation.loading = false;
+        let force_config = std::mem::take(&mut self.release_prep.force_config);
         match result {
             Ok(suggestion) => {
                 let pending_error = self.release_prep.error.take();
-                self.release_prep.remote = suggestion.default_profile.remote.clone();
-                self.release_prep.source_branch = suggestion.default_profile.source_branch.clone();
-                self.release_prep.target_branch = suggestion.default_profile.target_branch.clone();
+                let saved = force_config
+                    .then(|| {
+                        self.repo
+                            .path
+                            .as_ref()
+                            .and_then(|path| self.preferences.release_profiles.get(path))
+                            .cloned()
+                    })
+                    .flatten();
+                let base = saved.unwrap_or_else(|| suggestion.default_profile.clone());
+                self.release_prep.remote = base.remote.clone();
+                self.release_prep.source_branch = base.source_branch.clone();
+                self.release_prep.target_branch = base.target_branch.clone();
+                self.release_prep.validation_script =
+                    base.validation_script.clone().unwrap_or_default();
                 self.release_prep.backup_before_rebase = false;
                 self.release_prep.error = pending_error;
                 self.release_prep.suggestion = Some(suggestion);
@@ -121,7 +169,11 @@ impl App {
         let profile = self.release_prep.profile_from_inputs();
         if !valid_profile_input(&profile) {
             self.release_prep.error = Some(
-                "Remote, source branch, and target branch are required and must differ.".into(),
+                if !validation_script_is_single_line(profile.validation_script.as_deref()) {
+                    "Validation script must be a single line (no tabs or newlines).".into()
+                } else {
+                    "Remote, source branch, and target branch are required and must differ.".into()
+                },
             );
             return Task::none();
         }
@@ -268,6 +320,59 @@ impl App {
         self.start_release_prep_action_internal(action)
     }
 
+    pub(crate) fn release_has_script(&self) -> bool {
+        self.release_prep
+            .active_profile
+            .as_ref()
+            .is_some_and(ReleaseProfile::has_validation_script)
+    }
+
+    /// Apply edits from the actions-modal script input to the active
+    /// profile so gating and the auto sequence pick them up immediately.
+    /// The config form only writes to the input buffer; submit re-snapshots
+    /// the profile there.
+    fn sync_active_release_validation_script(&mut self) {
+        if self.release_prep.phase != ReleasePrepPhase::Actions
+            || self.release_prep.auto_running
+            || self.operation.loading
+        {
+            return;
+        }
+        let script = self.release_prep.validation_script.trim();
+        let script = (!script.is_empty()).then(|| script.to_string());
+        let Some(profile) = self.release_prep.active_profile.as_mut() else {
+            return;
+        };
+        if profile.validation_script == script {
+            return;
+        }
+        profile.validation_script = script;
+        // The edited script has not run yet, so any earlier validation
+        // result no longer applies; this also re-locks "Push target".
+        self.release_prep
+            .completed_actions
+            .retain(|action| *action != ReleasePrepAction::ValidateTarget);
+    }
+
+    pub(crate) fn persist_active_release_profile_if_changed(&mut self) -> Task<Message> {
+        let Some(path) = self.repo.path.clone() else {
+            return Task::none();
+        };
+        let Some(profile) = self.release_prep.active_profile.clone() else {
+            return Task::none();
+        };
+        if self
+            .preferences
+            .release_profiles
+            .get(&path)
+            .is_some_and(|saved| saved == &profile)
+        {
+            return Task::none();
+        }
+        self.preferences.release_profiles.insert(path, profile);
+        self.save_preferences()
+    }
+
     pub(crate) fn continue_release_prep_auto(&mut self) -> Task<Message> {
         if !self.release_prep.auto_running
             || self.operation.loading
@@ -292,9 +397,10 @@ impl App {
             self.operation.error = Some("Plan a release promotion first".into());
             return Task::none();
         }
-        let Some(next_action) =
-            next_incomplete_release_prep_action(&self.release_prep.completed_actions)
-        else {
+        let Some(next_action) = next_incomplete_release_prep_action(
+            &self.release_prep.completed_actions,
+            self.release_has_script(),
+        ) else {
             self.set_transient_status("Auto promotion already complete".into());
             return Task::none();
         };
@@ -313,12 +419,19 @@ impl App {
         if self.operation.loading || self.operation.auto_fetch_path.is_some() {
             return Task::none();
         }
+        // Running the validation step is the natural moment to keep a
+        // script edited in the actions modal for future promotions.
+        let save = if action == ReleasePrepAction::ValidateTarget {
+            self.persist_active_release_profile_if_changed()
+        } else {
+            Task::none()
+        };
         self.operation.loading = true;
         self.operation.error = None;
         self.release_prep.phase = ReleasePrepPhase::RunningAction;
         self.release_prep.active_action = Some(action);
         self.release_prep.animation_frame = 0;
-        Task::perform(
+        let run = Task::perform(
             release_prep::task::run_action(path, profile, action),
             move |result| {
                 Message::from(ReleasePrepMessage::ActionDone {
@@ -326,7 +439,8 @@ impl App {
                     result: Box::new(result),
                 })
             },
-        )
+        );
+        Task::batch([save, run])
     }
 
     fn finish_release_prep_action(
@@ -346,7 +460,8 @@ impl App {
                     self.release_prep.completed_actions.push(action);
                 }
                 if was_auto_action {
-                    self.release_prep.auto_next_action = next_release_prep_action(action);
+                    self.release_prep.auto_next_action =
+                        next_release_prep_action(action, self.release_has_script());
                     if self.release_prep.auto_next_action.is_none() {
                         self.release_prep.auto_running = false;
                     }
@@ -384,28 +499,56 @@ impl App {
     }
 }
 
-fn next_release_prep_action(action: ReleasePrepAction) -> Option<ReleasePrepAction> {
-    match action {
-        ReleasePrepAction::UpdateTargetFromSource => Some(ReleasePrepAction::PushTarget),
-        ReleasePrepAction::PushTarget => Some(ReleasePrepAction::SyncSourceFromTarget),
-        ReleasePrepAction::SyncSourceFromTarget => None,
+/// Ordered release promotion actions; `ValidateTarget` only participates when
+/// the active profile configures a validation script.
+pub(crate) fn release_prep_actions_for(has_script: bool) -> &'static [ReleasePrepAction] {
+    const WITH_VALIDATION: [ReleasePrepAction; 4] = [
+        ReleasePrepAction::UpdateTargetFromSource,
+        ReleasePrepAction::ValidateTarget,
+        ReleasePrepAction::PushTarget,
+        ReleasePrepAction::SyncSourceFromTarget,
+    ];
+    const WITHOUT_VALIDATION: [ReleasePrepAction; 3] = [
+        ReleasePrepAction::UpdateTargetFromSource,
+        ReleasePrepAction::PushTarget,
+        ReleasePrepAction::SyncSourceFromTarget,
+    ];
+    if has_script {
+        &WITH_VALIDATION
+    } else {
+        &WITHOUT_VALIDATION
     }
+}
+
+fn next_release_prep_action(
+    action: ReleasePrepAction,
+    has_script: bool,
+) -> Option<ReleasePrepAction> {
+    let actions = release_prep_actions_for(has_script);
+    actions
+        .iter()
+        .position(|candidate| *candidate == action)
+        .and_then(|index| actions.get(index + 1))
+        .copied()
 }
 
 fn next_incomplete_release_prep_action(
     completed_actions: &[ReleasePrepAction],
+    has_script: bool,
 ) -> Option<ReleasePrepAction> {
-    [
-        ReleasePrepAction::UpdateTargetFromSource,
-        ReleasePrepAction::PushTarget,
-        ReleasePrepAction::SyncSourceFromTarget,
-    ]
-    .into_iter()
-    .find(|action| !completed_actions.contains(action))
+    release_prep_actions_for(has_script)
+        .iter()
+        .find(|action| !completed_actions.contains(action))
+        .copied()
+}
+
+fn validation_script_is_single_line(script: Option<&str>) -> bool {
+    script.is_none_or(|script| !script.contains(['\t', '\n', '\r']))
 }
 
 fn valid_profile_input(profile: &ReleaseProfile) -> bool {
-    !profile.remote.trim().is_empty()
+    validation_script_is_single_line(profile.validation_script.as_deref())
+        && !profile.remote.trim().is_empty()
         && !profile.source_branch.trim().is_empty()
         && !profile.target_branch.trim().is_empty()
         && profile.source_branch != profile.target_branch

@@ -17,7 +17,8 @@ pub fn release_prep_config(state: &ReleasePrepState, loading: bool) -> Element<'
         && !state.remote.trim().is_empty()
         && !state.source_branch.trim().is_empty()
         && !state.target_branch.trim().is_empty()
-        && state.source_branch.trim() != state.target_branch.trim();
+        && state.source_branch.trim() != state.target_branch.trim()
+        && !state.validation_script.contains(['\t', '\n', '\r']);
 
     let hint = state
         .suggestion
@@ -75,6 +76,21 @@ pub fn release_prep_config(state: &ReleasePrepState, loading: bool) -> Element<'
             .unwrap_or(&[]),
         release_prep::Message::TargetBranchChanged,
     ))
+    .push(field(
+        "Validation script (optional)",
+        &state.validation_script,
+        release_prep::Message::ValidationScriptChanged,
+    ))
+    .push(
+        text(
+            "Runs via `sh -c` from the repo root before pushing the target; \
+             non-zero exit blocks the push. \
+             Env: NAITE_REMOTE, NAITE_SOURCE_BRANCH, NAITE_TARGET_BRANCH.",
+        )
+        .size(theme::FS_XS)
+        .font(theme::font_regular())
+        .color(color::TEXT_MUTED),
+    )
     .push(
         checkbox(
             "Create backup branch before rebase",
@@ -204,6 +220,10 @@ pub fn release_prep_actions(state: &ReleasePrepState, loading: bool) -> Element<
             .push(sync_row("Target", &sync.target));
     }
 
+    let has_script = profile.has_validation_script();
+    let validate_complete = state
+        .completed_actions
+        .contains(&ReleasePrepAction::ValidateTarget);
     let auto_running = state.auto_running;
     let auto_complete = release_prep_complete(state);
     let auto_enabled =
@@ -230,72 +250,77 @@ pub fn release_prep_actions(state: &ReleasePrepState, loading: bool) -> Element<
         "Run all"
     };
 
-    body.push(
-        column![
-            section_label("Guided mode"),
-            action_row(
-                "Update target from source",
-                ReleasePrepAction::UpdateTargetFromSource,
-                state,
-                actions_locked,
-            ),
-            action_row(
-                "Push target",
-                ReleasePrepAction::PushTarget,
-                state,
-                actions_locked,
-            ),
-            action_row(
-                "Rebase source onto target",
-                ReleasePrepAction::SyncSourceFromTarget,
-                state,
-                actions_locked,
-            ),
-        ]
-        .spacing(theme::SP_SM),
-    )
-    .push(
-        column![
-            section_label("Auto mode"),
-            container(
-                row![
-                    text(auto_label_text)
-                        .size(theme::FS_SM)
-                        .font(theme::font_regular())
-                        .color(if auto_running {
-                            color::ACCENT
-                        } else {
-                            color::TEXT
-                        }),
-                    Space::with_width(Length::Fill),
-                    button(text(auto_button_label).size(theme::FS_SM))
-                        .padding(Padding::from([5, 10]))
-                        .style(styles::danger_button)
-                        .on_press_maybe(
-                            auto_enabled
-                                .then_some(Message::from(release_prep::Message::AutoRequested))
-                        ),
-                ]
-                .align_y(Alignment::Center),
-            )
-            .padding(Padding::from([6, 8]))
-            .style(styles::inset_card),
-        ]
-        .spacing(theme::SP_SM),
-    )
-    .push(
-        row![
-            Space::with_width(Length::Fill),
-            button(text("Close").size(theme::FS_SM))
-                .padding(Padding::from([5, 10]))
-                .style(styles::subtle_button)
-                .on_press_maybe(
-                    (!auto_running).then_some(Message::from(release_prep::Message::Cancelled))
-                ),
-        ]
-        .align_y(Alignment::Center),
-    )
-    .into()
+    let mut guided = column![
+        section_label("Guided mode"),
+        action_row(
+            "Update target from source",
+            ReleasePrepAction::UpdateTargetFromSource,
+            state,
+            actions_locked,
+        ),
+    ]
+    .spacing(theme::SP_SM);
+    guided = guided.push(validation_script_row(state, actions_locked));
+    // The push gate: with a validation script configured, the target cannot
+    // be pushed until the script has passed.
+    let push_locked = actions_locked || (has_script && !validate_complete);
+    guided = guided
+        .push(action_row(
+            "Push target",
+            ReleasePrepAction::PushTarget,
+            state,
+            push_locked,
+        ))
+        .push(action_row(
+            "Rebase source onto target",
+            ReleasePrepAction::SyncSourceFromTarget,
+            state,
+            actions_locked,
+        ));
+
+    body.push(guided)
+        .push(
+            column![
+                section_label("Auto mode"),
+                container(
+                    row![
+                        text(auto_label_text)
+                            .size(theme::FS_SM)
+                            .font(theme::font_regular())
+                            .color(if auto_running {
+                                color::ACCENT
+                            } else {
+                                color::TEXT
+                            }),
+                        Space::with_width(Length::Fill),
+                        button(text(auto_button_label).size(theme::FS_SM))
+                            .padding(Padding::from([5, 10]))
+                            .style(styles::danger_button)
+                            .on_press_maybe(
+                                auto_enabled
+                                    .then_some(Message::from(release_prep::Message::AutoRequested))
+                            ),
+                    ]
+                    .align_y(Alignment::Center),
+                )
+                .padding(Padding::from([6, 8]))
+                .style(styles::inset_card),
+            ]
+            .spacing(theme::SP_SM),
+        )
+        .push(
+            row![
+                Space::with_width(Length::Fill),
+                button(text("Close").size(theme::FS_SM))
+                    .padding(Padding::from([5, 10]))
+                    .style(styles::subtle_button)
+                    .on_press_maybe(
+                        (!auto_running).then_some(Message::from(release_prep::Message::Cancelled))
+                    ),
+            ]
+            .align_y(Alignment::Center),
+        )
+        .into()
 }
 
 fn section_label(label: &str) -> Element<'_, Message> {
@@ -304,6 +329,65 @@ fn section_label(label: &str) -> Element<'_, Message> {
         .font(theme::font_semibold())
         .color(color::TEXT_SUBTLE)
         .into()
+}
+
+/// The validation step row doubles as the editor for the script, so a
+/// planned promotion can gain (or drop) validation directly from the
+/// actions modal. Edits apply to the active profile immediately and are
+/// persisted when the script runs or the modal closes.
+fn validation_script_row(state: &ReleasePrepState, locked: bool) -> Element<'_, Message> {
+    let action = ReleasePrepAction::ValidateTarget;
+    let is_active = state.active_action == Some(action);
+    let is_completed = state.completed_actions.contains(&action);
+    let has_script = !state.validation_script.trim().is_empty();
+    let frame = state.animation_frame;
+
+    let (status_glyph, status_color) = if is_active {
+        (spinner_frame(frame), color::ACCENT)
+    } else if is_completed {
+        ("✓", color::SUCCESS)
+    } else if has_script {
+        ("•", color::TEXT_SUBTLE)
+    } else {
+        ("•", color::TEXT_MUTED)
+    };
+
+    let mut input = text_input(
+        "Validation script (optional, runs via sh -c before push)",
+        &state.validation_script,
+    )
+    .padding(Padding::from([4, 8]))
+    .size(theme::FS_SM)
+    .style(styles::form_text_input)
+    .width(Length::Fill);
+    if !locked {
+        input = input
+            .on_input(|value| Message::from(release_prep::Message::ValidationScriptChanged(value)));
+    }
+
+    let button_label = if is_completed { "Done" } else { "Run" };
+    let button_locked = locked || is_completed || !has_script;
+
+    container(
+        row![
+            text(status_glyph)
+                .size(theme::FS_SM)
+                .font(iced::Font::MONOSPACE)
+                .color(status_color),
+            input,
+            button(text(button_label).size(theme::FS_SM))
+                .padding(Padding::from([5, 10]))
+                .style(styles::primary_button)
+                .on_press_maybe((!button_locked).then_some(Message::from(
+                    release_prep::Message::ActionRequested(action),
+                ))),
+        ]
+        .spacing(theme::SP_SM)
+        .align_y(Alignment::Center),
+    )
+    .padding(Padding::from([6, 8]))
+    .style(styles::inset_card)
+    .into()
 }
 
 fn action_row<'a>(
@@ -370,13 +454,13 @@ fn action_row<'a>(
 }
 
 fn release_prep_complete(state: &ReleasePrepState) -> bool {
-    [
-        ReleasePrepAction::UpdateTargetFromSource,
-        ReleasePrepAction::PushTarget,
-        ReleasePrepAction::SyncSourceFromTarget,
-    ]
-    .into_iter()
-    .all(|action| state.completed_actions.contains(&action))
+    let has_script = state
+        .active_profile
+        .as_ref()
+        .is_some_and(ReleaseProfile::has_validation_script);
+    crate::features::release_prep::update::release_prep_actions_for(has_script)
+        .iter()
+        .all(|action| state.completed_actions.contains(action))
 }
 
 fn progress_line<'a>(label: &'a str) -> Element<'a, Message> {

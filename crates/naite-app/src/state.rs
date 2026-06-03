@@ -314,7 +314,11 @@ pub struct ReleasePrepState {
     pub remote: String,
     pub source_branch: String,
     pub target_branch: String,
+    pub validation_script: String,
     pub backup_before_rebase: bool,
+    /// Set by `ConfigureRequested` so the next `SuggestionLoaded` prefills
+    /// the config form from the saved profile instead of fast-starting.
+    pub force_config: bool,
     pub animation_frame: usize,
     pub error: Option<String>,
     pub suggestion: Option<ReleaseProfileSuggestion>,
@@ -338,10 +342,13 @@ pub enum ReleasePrepPhase {
 
 impl ReleasePrepState {
     pub fn profile_from_inputs(&self) -> ReleaseProfile {
+        let validation_script = self.validation_script.trim();
         ReleaseProfile {
             remote: self.remote.trim().to_string(),
             source_branch: self.source_branch.trim().to_string(),
             target_branch: self.target_branch.trim().to_string(),
+            validation_script: (!validation_script.is_empty())
+                .then(|| validation_script.to_string()),
         }
     }
 }

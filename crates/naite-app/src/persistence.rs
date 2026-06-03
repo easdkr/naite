@@ -322,6 +322,17 @@ fn serialize_preferences(preferences: &PreferencesState) -> String {
         out.push_str(&profile.source_branch);
         out.push('\t');
         out.push_str(&profile.target_branch);
+        // Optional fifth column; omitted when no script so existing rows
+        // stay byte-identical.
+        if let Some(script) = profile
+            .validation_script
+            .as_deref()
+            .map(str::trim)
+            .filter(|script| !script.is_empty())
+        {
+            out.push('\t');
+            out.push_str(script);
+        }
         out.push('\n');
     }
     out
@@ -360,22 +371,34 @@ fn parse_preferences(raw: &str) -> PreferencesState {
             }
             "release_profile" => {
                 let fields = value.split('\t').collect::<Vec<_>>();
-                if let [path, remote, source_branch, target_branch] = fields.as_slice() {
-                    let path = Path::new(path);
-                    if path.is_absolute()
-                        && !remote.trim().is_empty()
-                        && !source_branch.trim().is_empty()
-                        && !target_branch.trim().is_empty()
-                    {
-                        preferences.release_profiles.insert(
-                            path.to_path_buf(),
-                            ReleaseProfile {
-                                remote: (*remote).to_string(),
-                                source_branch: (*source_branch).to_string(),
-                                target_branch: (*target_branch).to_string(),
-                            },
-                        );
+                // Legacy rows have four fields; the optional fifth is the
+                // validation script.
+                let (path, remote, source_branch, target_branch, script) = match fields.as_slice() {
+                    [path, remote, source, target] => (*path, *remote, *source, *target, None),
+                    [path, remote, source, target, script] => {
+                        (*path, *remote, *source, *target, Some(*script))
                     }
+                    _ => continue,
+                };
+                let path = Path::new(path);
+                if path.is_absolute()
+                    && !remote.trim().is_empty()
+                    && !source_branch.trim().is_empty()
+                    && !target_branch.trim().is_empty()
+                {
+                    let validation_script = script
+                        .map(str::trim)
+                        .filter(|script| !script.is_empty())
+                        .map(str::to_string);
+                    preferences.release_profiles.insert(
+                        path.to_path_buf(),
+                        ReleaseProfile {
+                            remote: remote.to_string(),
+                            source_branch: source_branch.to_string(),
+                            target_branch: target_branch.to_string(),
+                            validation_script,
+                        },
+                    );
                 }
             }
             _ => {}
@@ -556,6 +579,35 @@ mod tests {
                 remote: "origin".into(),
                 source_branch: "staging".into(),
                 target_branch: "main".into(),
+                validation_script: None,
+            },
+        );
+
+        let raw = serialize_preferences(&preferences);
+        let parsed = parse_preferences(&raw);
+
+        assert!(raw.contains("release_profile\t/tmp/repo\torigin\tstaging\tmain\n"));
+        assert_eq!(
+            parsed.release_profiles.get(Path::new("/tmp/repo")),
+            Some(&ReleaseProfile {
+                remote: "origin".into(),
+                source_branch: "staging".into(),
+                target_branch: "main".into(),
+                validation_script: None,
+            })
+        );
+    }
+
+    #[test]
+    fn preferences_round_trip_release_profile_validation_script() {
+        let mut preferences = PreferencesState::default();
+        preferences.release_profiles.insert(
+            PathBuf::from("/tmp/repo"),
+            ReleaseProfile {
+                remote: "origin".into(),
+                source_branch: "staging".into(),
+                target_branch: "main".into(),
+                validation_script: Some("cargo test --workspace".into()),
             },
         );
 
@@ -563,12 +615,39 @@ mod tests {
         let parsed = parse_preferences(&raw);
 
         assert_eq!(
+            parsed
+                .release_profiles
+                .get(Path::new("/tmp/repo"))
+                .and_then(|profile| profile.validation_script.as_deref()),
+            Some("cargo test --workspace")
+        );
+    }
+
+    #[test]
+    fn preferences_parse_legacy_four_field_release_profile() {
+        let parsed = parse_preferences("release_profile\t/tmp/repo\torigin\tstaging\tmain\n");
+
+        assert_eq!(
             parsed.release_profiles.get(Path::new("/tmp/repo")),
             Some(&ReleaseProfile {
                 remote: "origin".into(),
                 source_branch: "staging".into(),
                 target_branch: "main".into(),
+                validation_script: None,
             })
+        );
+    }
+
+    #[test]
+    fn preferences_parse_blank_script_column_as_none() {
+        let parsed = parse_preferences("release_profile\t/tmp/repo\torigin\tstaging\tmain\t  \n");
+
+        assert_eq!(
+            parsed
+                .release_profiles
+                .get(Path::new("/tmp/repo"))
+                .map(|profile| profile.validation_script.clone()),
+            Some(None)
         );
     }
 }

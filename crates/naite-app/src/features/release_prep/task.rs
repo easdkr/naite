@@ -117,6 +117,7 @@ pub(crate) async fn run_action(
         let repo = Repository::open(&path).map_err(|e| e.to_string())?;
         match action {
             ReleasePrepAction::UpdateTargetFromSource => repo.fast_forward_release_target(&profile),
+            ReleasePrepAction::ValidateTarget => repo.validate_release_target(&profile),
             ReleasePrepAction::PushTarget => repo.push_release_target(&profile),
             ReleasePrepAction::SyncSourceFromTarget => {
                 repo.sync_release_source_from_target(&profile)

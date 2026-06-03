@@ -288,7 +288,9 @@ pub enum CommandId {
     Push,
     PushForceWithLease,
     PrepareProductionRelease,
+    ConfigureProductionRelease,
     ReleaseUpdateTargetFromSource,
+    ReleaseValidateTarget,
     ReleasePushTarget,
     ReleaseSyncSourceFromTarget,
     MergeSelectedRef,
@@ -609,10 +611,15 @@ impl App {
         let rebase_in_progress = self.repo.operation_state.rebase_in_progress;
         let release_profile_active = self.release_prep.active_profile.is_some();
         let release_auto_running = self.release_prep.auto_running;
+        let release_has_script = self.release_has_script();
         let release_update_target_complete = self
             .release_prep
             .completed_actions
             .contains(&crate::features::release_prep::ReleasePrepAction::UpdateTargetFromSource);
+        let release_validate_target_complete = self
+            .release_prep
+            .completed_actions
+            .contains(&crate::features::release_prep::ReleasePrepAction::ValidateTarget);
         let release_push_target_complete = self
             .release_prep
             .completed_actions
@@ -1283,6 +1290,21 @@ impl App {
                 },
             },
             CommandPaletteItem {
+                id: CommandId::ConfigureProductionRelease,
+                label: "Configure release promotion",
+                description: "Edit the saved remote, branches, and validation script for this repo",
+                shortcut: "",
+                disabled_reason: if self.operation.loading {
+                    Some("Operation in progress")
+                } else if release_auto_running {
+                    Some("Auto promotion in progress")
+                } else if !has_repo {
+                    Some("Open a repository first")
+                } else {
+                    None
+                },
+            },
+            CommandPaletteItem {
                 id: CommandId::ReleaseUpdateTargetFromSource,
                 label: "Update release target from source",
                 description: "Fast-forward the configured release target from the source branch",
@@ -1302,6 +1324,27 @@ impl App {
                 },
             },
             CommandPaletteItem {
+                id: CommandId::ReleaseValidateTarget,
+                label: "Run release validation script",
+                description: "Run the configured validation script against the release target",
+                shortcut: "",
+                disabled_reason: if self.operation.loading {
+                    Some("Operation in progress")
+                } else if release_auto_running {
+                    Some("Auto promotion in progress")
+                } else if release_validate_target_complete {
+                    Some("Release step already complete")
+                } else if !release_profile_active {
+                    Some("Plan a release promotion first")
+                } else if !release_has_script {
+                    Some("No validation script configured")
+                } else if self.repo.status_detail.is_dirty() {
+                    Some("Commit, stash, or resolve local changes first")
+                } else {
+                    None
+                },
+            },
+            CommandPaletteItem {
                 id: CommandId::ReleasePushTarget,
                 label: "Push release target",
                 description: "Push the configured release target branch to its remote",
@@ -1314,6 +1357,8 @@ impl App {
                     Some("Release step already complete")
                 } else if !release_profile_active {
                     Some("Plan a release promotion first")
+                } else if release_has_script && !release_validate_target_complete {
+                    Some("Run the validation script first")
                 } else {
                     None
                 },

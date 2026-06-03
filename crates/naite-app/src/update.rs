@@ -768,7 +768,12 @@ impl App {
                     if self.release_prep.auto_running {
                         return Task::none();
                     }
+                    let closing_actions = self.release_prep.phase == ReleasePrepPhase::Actions;
                     self.release_prep.phase = ReleasePrepPhase::Idle;
+                    if closing_actions {
+                        // Keep script edits made in the actions modal.
+                        return self.persist_active_release_profile_if_changed();
+                    }
                     return Task::none();
                 }
                 if self.preferences.shortcuts_open {

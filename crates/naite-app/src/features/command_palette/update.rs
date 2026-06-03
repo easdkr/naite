@@ -283,9 +283,18 @@ impl App {
             CommandId::PrepareProductionRelease => {
                 self.update(release_prep::Message::Requested.into())
             }
+            CommandId::ConfigureProductionRelease => {
+                self.update(release_prep::Message::ConfigureRequested.into())
+            }
             CommandId::ReleaseUpdateTargetFromSource => self.update(
                 release_prep::Message::ActionRequested(
                     release_prep::ReleasePrepAction::UpdateTargetFromSource,
+                )
+                .into(),
+            ),
+            CommandId::ReleaseValidateTarget => self.update(
+                release_prep::Message::ActionRequested(
+                    release_prep::ReleasePrepAction::ValidateTarget,
                 )
                 .into(),
             ),

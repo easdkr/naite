@@ -2732,6 +2732,7 @@ fn release_promotion_rebase_rejects_apply_then_force_push() {
                 remote: "origin".into(),
                 source_branch: "staging".into(),
                 target_branch: "main".into(),
+                validation_script: None,
             }),
             ..Default::default()
         },
@@ -2780,6 +2781,7 @@ fn release_promotion_auto_rebase_sets_pending_pipeline() {
                 remote: "origin".into(),
                 source_branch: "staging".into(),
                 target_branch: "main".into(),
+                validation_script: None,
             }),
             ..Default::default()
         },
@@ -2838,6 +2840,7 @@ fn release_promotion_auto_continues_after_repo_reload() {
                 remote: "origin".into(),
                 source_branch: "staging".into(),
                 target_branch: "main".into(),
+                validation_script: None,
             }),
             auto_running: true,
             auto_next_action: Some(release_prep::ReleasePrepAction::UpdateTargetFromSource),
@@ -2881,6 +2884,7 @@ fn release_promotion_auto_mode_ignores_manual_controls() {
                 remote: "origin".into(),
                 source_branch: "staging".into(),
                 target_branch: "main".into(),
+                validation_script: None,
             }),
             phase: ReleasePrepPhase::Actions,
             auto_running: true,
@@ -2938,6 +2942,7 @@ fn release_promotion_action_waits_for_auto_fetch_to_finish() {
                 remote: "origin".into(),
                 source_branch: "staging".into(),
                 target_branch: "main".into(),
+                validation_script: None,
             }),
             phase: ReleasePrepPhase::Actions,
             ..Default::default()
@@ -2975,6 +2980,7 @@ fn release_promotion_auto_waits_for_auto_fetch_without_losing_next_action() {
                 remote: "origin".into(),
                 source_branch: "staging".into(),
                 target_branch: "main".into(),
+                validation_script: None,
             }),
             phase: ReleasePrepPhase::Actions,
             auto_running: true,
@@ -3012,6 +3018,7 @@ fn release_promotion_completed_steps_cannot_run_again() {
                 remote: "origin".into(),
                 source_branch: "staging".into(),
                 target_branch: "main".into(),
+                validation_script: None,
             }),
             completed_actions: vec![
                 release_prep::ReleasePrepAction::UpdateTargetFromSource,
@@ -3051,6 +3058,499 @@ fn release_promotion_completed_steps_cannot_run_again() {
     assert_eq!(
         release_command.disabled_reason,
         Some("Release step already complete")
+    );
+}
+
+fn release_profile_with_script(script: Option<&str>) -> ReleaseProfile {
+    ReleaseProfile {
+        remote: "origin".into(),
+        source_branch: "staging".into(),
+        target_branch: "main".into(),
+        validation_script: script.map(str::to_string),
+    }
+}
+
+fn ready_release_sync_check(profile: &ReleaseProfile) -> ReleaseSyncCheck {
+    let branch_sync = |branch: &str| ReleaseBranchSync {
+        branch: branch.into(),
+        local_ref: format!("refs/heads/{branch}"),
+        remote_ref: format!("refs/remotes/{}/{branch}", profile.remote),
+        local_oid: Some("abc1234".into()),
+        remote_oid: Some("abc1234".into()),
+        ahead: 0,
+        behind: 0,
+    };
+    ReleaseSyncCheck {
+        profile: profile.clone(),
+        source: branch_sync(&profile.source_branch),
+        target: branch_sync(&profile.target_branch),
+    }
+}
+
+#[test]
+fn release_promotion_auto_sequence_includes_validation_step_when_script_configured() {
+    let profile = release_profile_with_script(Some("cargo test"));
+    let sync_check = ready_release_sync_check(&profile);
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(PathBuf::from("/tmp/naite")),
+            ..Default::default()
+        },
+        release_prep: ReleasePrepState {
+            active_profile: Some(profile),
+            phase: ReleasePrepPhase::RunningAction,
+            auto_running: true,
+            active_action: Some(release_prep::ReleasePrepAction::UpdateTargetFromSource),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let _ = app.update(Message::from(release_prep::Message::ActionDone {
+        action: release_prep::ReleasePrepAction::UpdateTargetFromSource,
+        result: Box::new(Ok(sync_check.clone())),
+    }));
+
+    assert!(app.release_prep.auto_running);
+    assert_eq!(
+        app.release_prep.auto_next_action,
+        Some(release_prep::ReleasePrepAction::ValidateTarget)
+    );
+
+    let _ = app.update(Message::from(release_prep::Message::ActionDone {
+        action: release_prep::ReleasePrepAction::ValidateTarget,
+        result: Box::new(Ok(sync_check)),
+    }));
+
+    assert!(app.release_prep.auto_running);
+    assert_eq!(
+        app.release_prep.auto_next_action,
+        Some(release_prep::ReleasePrepAction::PushTarget)
+    );
+}
+
+#[test]
+fn release_promotion_auto_sequence_skips_validation_step_without_script() {
+    let profile = release_profile_with_script(None);
+    let sync_check = ready_release_sync_check(&profile);
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(PathBuf::from("/tmp/naite")),
+            ..Default::default()
+        },
+        release_prep: ReleasePrepState {
+            active_profile: Some(profile),
+            phase: ReleasePrepPhase::RunningAction,
+            auto_running: true,
+            active_action: Some(release_prep::ReleasePrepAction::UpdateTargetFromSource),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let _ = app.update(Message::from(release_prep::Message::ActionDone {
+        action: release_prep::ReleasePrepAction::UpdateTargetFromSource,
+        result: Box::new(Ok(sync_check)),
+    }));
+
+    assert!(app.release_prep.auto_running);
+    assert_eq!(
+        app.release_prep.auto_next_action,
+        Some(release_prep::ReleasePrepAction::PushTarget)
+    );
+}
+
+#[test]
+fn release_push_target_command_locked_until_validation_passes() {
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(PathBuf::from("/tmp/naite")),
+            ..Default::default()
+        },
+        release_prep: ReleasePrepState {
+            active_profile: Some(release_profile_with_script(Some("cargo test"))),
+            phase: ReleasePrepPhase::Actions,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let push_command = |app: &mut App| {
+        app.command_palette_items()
+            .into_iter()
+            .find(|item| item.id == CommandId::ReleasePushTarget)
+            .unwrap()
+            .disabled_reason
+    };
+
+    assert_eq!(
+        push_command(&mut app),
+        Some("Run the validation script first")
+    );
+
+    app.release_prep
+        .completed_actions
+        .push(release_prep::ReleasePrepAction::ValidateTarget);
+
+    assert_eq!(push_command(&mut app), None);
+}
+
+#[test]
+fn release_validate_target_command_requires_configured_script() {
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(PathBuf::from("/tmp/naite")),
+            ..Default::default()
+        },
+        release_prep: ReleasePrepState {
+            active_profile: Some(release_profile_with_script(None)),
+            phase: ReleasePrepPhase::Actions,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let validate_command = |app: &mut App| {
+        app.command_palette_items()
+            .into_iter()
+            .find(|item| item.id == CommandId::ReleaseValidateTarget)
+            .unwrap()
+            .disabled_reason
+    };
+
+    assert_eq!(
+        validate_command(&mut app),
+        Some("No validation script configured")
+    );
+
+    app.release_prep.active_profile = Some(release_profile_with_script(Some("cargo test")));
+
+    assert_eq!(validate_command(&mut app), None);
+}
+
+#[test]
+fn configure_release_promotion_reopens_config_prefilled_from_saved_profile() {
+    let path = PathBuf::from("/tmp/naite");
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(path.clone()),
+            ..Default::default()
+        },
+        command_palette: CommandPaletteState {
+            open: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    app.preferences.release_profiles.insert(
+        path,
+        ReleaseProfile {
+            remote: "upstream".into(),
+            source_branch: "develop".into(),
+            target_branch: "release".into(),
+            validation_script: Some("./scripts/verify.sh".into()),
+        },
+    );
+
+    let _ = app.run_command_palette_command(CommandId::ConfigureProductionRelease);
+
+    // Unlike "Plan release promotion", configuring never fast-starts.
+    assert!(app.release_prep.force_config);
+    assert!(app.operation.loading);
+    assert_eq!(app.release_prep.phase, ReleasePrepPhase::Preparing);
+
+    let suggestion = ReleaseProfileSuggestion {
+        remotes: vec!["origin".into()],
+        source_candidates: vec!["staging".into()],
+        target_candidates: vec!["main".into()],
+        default_profile: release_profile_with_script(None),
+    };
+    let _ = app.update(Message::from(release_prep::Message::SuggestionLoaded(Ok(
+        suggestion,
+    ))));
+
+    assert_eq!(app.release_prep.phase, ReleasePrepPhase::Configuring);
+    assert!(!app.release_prep.force_config);
+    assert_eq!(app.release_prep.remote, "upstream");
+    assert_eq!(app.release_prep.source_branch, "develop");
+    assert_eq!(app.release_prep.target_branch, "release");
+    assert_eq!(app.release_prep.validation_script, "./scripts/verify.sh");
+}
+
+#[test]
+fn release_profile_submit_rejects_multiline_validation_script() {
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(PathBuf::from("/tmp/naite")),
+            ..Default::default()
+        },
+        release_prep: ReleasePrepState {
+            phase: ReleasePrepPhase::Configuring,
+            remote: "origin".into(),
+            source_branch: "staging".into(),
+            target_branch: "main".into(),
+            validation_script: "cargo test\ncargo clippy".into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let _ = app.update(Message::from(release_prep::Message::ProfileSubmitted));
+
+    assert_eq!(
+        app.release_prep.error.as_deref(),
+        Some("Validation script must be a single line (no tabs or newlines).")
+    );
+    assert!(app.preferences.release_profiles.is_empty());
+    assert!(!app.operation.loading);
+}
+
+#[test]
+fn actions_modal_script_edit_updates_active_profile_and_rearms_validation() {
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(PathBuf::from("/tmp/naite")),
+            ..Default::default()
+        },
+        release_prep: ReleasePrepState {
+            active_profile: Some(release_profile_with_script(Some("old"))),
+            validation_script: "old".into(),
+            phase: ReleasePrepPhase::Actions,
+            completed_actions: vec![
+                release_prep::ReleasePrepAction::UpdateTargetFromSource,
+                release_prep::ReleasePrepAction::ValidateTarget,
+            ],
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let _ = app.update(Message::from(
+        release_prep::Message::ValidationScriptChanged("echo new".into()),
+    ));
+
+    assert_eq!(
+        app.release_prep
+            .active_profile
+            .as_ref()
+            .and_then(|profile| profile.validation_script.as_deref()),
+        Some("echo new")
+    );
+    assert!(!app
+        .release_prep
+        .completed_actions
+        .contains(&release_prep::ReleasePrepAction::ValidateTarget));
+    assert!(app
+        .release_prep
+        .completed_actions
+        .contains(&release_prep::ReleasePrepAction::UpdateTargetFromSource));
+
+    let push_command = app
+        .command_palette_items()
+        .into_iter()
+        .find(|item| item.id == CommandId::ReleasePushTarget)
+        .unwrap();
+    assert_eq!(
+        push_command.disabled_reason,
+        Some("Run the validation script first")
+    );
+}
+
+#[test]
+fn actions_modal_script_edit_clears_validation_when_emptied() {
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(PathBuf::from("/tmp/naite")),
+            ..Default::default()
+        },
+        release_prep: ReleasePrepState {
+            active_profile: Some(release_profile_with_script(Some("old"))),
+            validation_script: "old".into(),
+            phase: ReleasePrepPhase::Actions,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let _ = app.update(Message::from(
+        release_prep::Message::ValidationScriptChanged("  ".into()),
+    ));
+
+    assert_eq!(
+        app.release_prep
+            .active_profile
+            .as_ref()
+            .map(|profile| profile.validation_script.clone()),
+        Some(None)
+    );
+
+    let push_command = app
+        .command_palette_items()
+        .into_iter()
+        .find(|item| item.id == CommandId::ReleasePushTarget)
+        .unwrap();
+    assert_eq!(push_command.disabled_reason, None);
+}
+
+#[test]
+fn actions_modal_script_edit_does_not_touch_profile_while_auto_running() {
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(PathBuf::from("/tmp/naite")),
+            ..Default::default()
+        },
+        release_prep: ReleasePrepState {
+            active_profile: Some(release_profile_with_script(Some("old"))),
+            validation_script: "old".into(),
+            phase: ReleasePrepPhase::Actions,
+            auto_running: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let _ = app.update(Message::from(
+        release_prep::Message::ValidationScriptChanged("new".into()),
+    ));
+
+    assert_eq!(app.release_prep.validation_script, "new");
+    assert_eq!(
+        app.release_prep
+            .active_profile
+            .as_ref()
+            .and_then(|profile| profile.validation_script.as_deref()),
+        Some("old")
+    );
+}
+
+#[test]
+fn configuring_script_edit_does_not_touch_active_profile() {
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(PathBuf::from("/tmp/naite")),
+            ..Default::default()
+        },
+        release_prep: ReleasePrepState {
+            active_profile: Some(release_profile_with_script(Some("old"))),
+            validation_script: "old".into(),
+            phase: ReleasePrepPhase::Configuring,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let _ = app.update(Message::from(
+        release_prep::Message::ValidationScriptChanged("new".into()),
+    ));
+
+    assert_eq!(
+        app.release_prep
+            .active_profile
+            .as_ref()
+            .and_then(|profile| profile.validation_script.as_deref()),
+        Some("old")
+    );
+}
+
+#[test]
+fn running_validation_persists_edited_script_to_preferences() {
+    let path = PathBuf::from("/tmp/naite");
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(path.clone()),
+            ..Default::default()
+        },
+        release_prep: ReleasePrepState {
+            active_profile: Some(release_profile_with_script(None)),
+            phase: ReleasePrepPhase::Actions,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let _ = app.update(Message::from(
+        release_prep::Message::ValidationScriptChanged("cargo test".into()),
+    ));
+    let _ = app.update(Message::from(release_prep::Message::ActionRequested(
+        release_prep::ReleasePrepAction::ValidateTarget,
+    )));
+
+    assert!(app.operation.loading);
+    assert_eq!(
+        app.release_prep.active_action,
+        Some(release_prep::ReleasePrepAction::ValidateTarget)
+    );
+    assert_eq!(
+        app.preferences
+            .release_profiles
+            .get(&path)
+            .and_then(|profile| profile.validation_script.as_deref()),
+        Some("cargo test")
+    );
+}
+
+#[test]
+fn closing_actions_modal_persists_script_changes() {
+    let path = PathBuf::from("/tmp/naite");
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(path.clone()),
+            ..Default::default()
+        },
+        release_prep: ReleasePrepState {
+            active_profile: Some(release_profile_with_script(None)),
+            phase: ReleasePrepPhase::Actions,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    app.preferences
+        .release_profiles
+        .insert(path.clone(), release_profile_with_script(None));
+
+    let _ = app.update(Message::from(
+        release_prep::Message::ValidationScriptChanged("./verify.sh".into()),
+    ));
+    let _ = app.update(Message::from(release_prep::Message::Cancelled));
+
+    assert_eq!(app.release_prep.phase, ReleasePrepPhase::Idle);
+    assert_eq!(
+        app.preferences
+            .release_profiles
+            .get(&path)
+            .and_then(|profile| profile.validation_script.as_deref()),
+        Some("./verify.sh")
+    );
+}
+
+#[test]
+fn escape_from_actions_modal_persists_script_changes() {
+    let path = PathBuf::from("/tmp/naite");
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(path.clone()),
+            ..Default::default()
+        },
+        release_prep: ReleasePrepState {
+            active_profile: Some(release_profile_with_script(None)),
+            phase: ReleasePrepPhase::Actions,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let _ = app.update(Message::from(
+        release_prep::Message::ValidationScriptChanged("true".into()),
+    ));
+    let _ = app.update(Message::Keyboard(KeyAction::Escape));
+
+    assert_eq!(app.release_prep.phase, ReleasePrepPhase::Idle);
+    assert_eq!(
+        app.preferences
+            .release_profiles
+            .get(&path)
+            .and_then(|profile| profile.validation_script.as_deref()),
+        Some("true")
     );
 }
 
@@ -4637,6 +5137,7 @@ fn production_release_prep_suggestion_preserves_dirty_repo_error() {
             remote: "origin".into(),
             source_branch: "staging".into(),
             target_branch: "main".into(),
+            validation_script: None,
         },
     };
 
@@ -4676,6 +5177,7 @@ fn production_release_prep_uses_saved_profile_without_config_modal() {
             remote: "origin".into(),
             source_branch: "staging".into(),
             target_branch: "main".into(),
+            validation_script: None,
         },
     );
 
@@ -4742,6 +5244,7 @@ fn production_release_prepare_applies_post_sync_repo_snapshot_before_rebase() {
         remote: "origin".into(),
         source_branch: "staging".into(),
         target_branch: "main".into(),
+        validation_script: None,
     };
     let sync_check = ReleaseSyncCheck {
         profile: profile.clone(),
@@ -4898,6 +5401,7 @@ fn production_release_followup_commands_require_active_profile() {
                 remote: "origin".into(),
                 source_branch: "staging".into(),
                 target_branch: "main".into(),
+                validation_script: None,
             }),
             ..Default::default()
         },
@@ -5310,6 +5814,7 @@ fn auto_fetch_done_failure_resumes_pending_release_prep_auto() {
                 remote: "origin".into(),
                 source_branch: "staging".into(),
                 target_branch: "main".into(),
+                validation_script: None,
             }),
             phase: ReleasePrepPhase::Actions,
             auto_running: true,
@@ -5357,6 +5862,7 @@ fn auto_fetch_done_success_resumes_pending_release_prep_auto() {
                 remote: "origin".into(),
                 source_branch: "staging".into(),
                 target_branch: "main".into(),
+                validation_script: None,
             }),
             phase: ReleasePrepPhase::Actions,
             auto_running: true,
