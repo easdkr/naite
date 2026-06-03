@@ -3055,7 +3055,7 @@ dependencies = [
 
 [[package]]
 name = "naite-app"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "alacritty_terminal",
  "iced",
@@ -3070,7 +3070,7 @@ dependencies = [
 
 [[package]]
 name = "naite-core"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "gix",
  "thiserror 1.0.69",
