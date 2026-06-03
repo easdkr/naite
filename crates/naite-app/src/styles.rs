@@ -143,12 +143,14 @@ pub fn rebase_prompt_preview_footer(_: &Theme) -> container::Style {
     }
 }
 
-pub fn rebase_prompt_action_chip(_: &Theme) -> container::Style {
-    container::Style {
-        background: Some(Background::Color(color::with_alpha(color::SURFACE_1, 0.85))),
+/// Action chip in the rebase confirmation preview, tinted with the action's
+/// color so each operation kind reads at a glance (Linear-style tag pill).
+pub fn rebase_prompt_action_chip(tint: Color) -> impl Fn(&Theme) -> container::Style {
+    move |_| container::Style {
+        background: Some(Background::Color(color::with_alpha(tint, 0.12))),
         border: Border {
-            color: Color::TRANSPARENT,
-            width: 0.0,
+            color: color::with_alpha(tint, 0.25),
+            width: 1.0,
             radius: theme::R_SM.into(),
         },
         ..Default::default()

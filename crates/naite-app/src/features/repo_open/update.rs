@@ -265,6 +265,25 @@ impl App {
                         }
                     }
                 }
+                // The rebase plan resolves avatars through the same lookup,
+                // so route matching results into its rows as well.
+                if let Some(session) = self.rebase.as_mut() {
+                    for row in &mut session.plan {
+                        if let Some(url) = by_commit.get(&row.commit.id) {
+                            row.author_avatar_url = Some(url.clone());
+                            urls.push(url.clone());
+                            if let Some(key) = Self::author_avatar_key(
+                                &row.commit.author_email,
+                                &row.commit.author_name,
+                            ) {
+                                if cached_avatar_urls.get(&key) != Some(url) {
+                                    cached_avatar_urls.insert(key, url.clone());
+                                    cache_changed = true;
+                                }
+                            }
+                        }
+                    }
+                }
                 if cache_changed {
                     let _ = persistence::save_avatar_urls(&cached_avatar_urls);
                 }

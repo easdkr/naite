@@ -194,6 +194,8 @@ pub struct RebasePromptRow {
     pub action: RebaseAction,
     pub short_id: String,
     pub summary: String,
+    pub author_name: String,
+    pub author_avatar_url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

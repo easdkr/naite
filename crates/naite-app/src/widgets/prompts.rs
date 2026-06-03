@@ -9,6 +9,7 @@ use crate::features::rebase::RebaseApplyMode;
 use crate::features::{
     branch_manage, checkout, discard, history, push, rebase, stash, tag, worktree,
 };
+use crate::state::AvatarCache;
 use crate::styles;
 use crate::theme::{self, color};
 use crate::{
@@ -418,7 +419,11 @@ pub fn history_prompt<'a>(prompt: &'a HistoryPrompt, loading: bool) -> Element<'
     .into()
 }
 
-pub fn rebase_prompt<'a>(prompt: &'a RebasePrompt, loading: bool) -> Element<'a, Message> {
+pub fn rebase_prompt<'a>(
+    prompt: &'a RebasePrompt,
+    avatars: &'a AvatarCache,
+    loading: bool,
+) -> Element<'a, Message> {
     let (confirm_label, confirm_style): (
         &str,
         fn(&Theme, iced_button::Status) -> iced_button::Style,
@@ -437,7 +442,7 @@ pub fn rebase_prompt<'a>(prompt: &'a RebasePrompt, loading: bool) -> Element<'a,
             .size(theme::FS_SM)
             .font(theme::font_regular())
             .color(color::TEXT_MUTED),
-        rebase_prompt_preview(prompt),
+        rebase_prompt_preview(prompt, avatars),
         row![
             Space::with_width(Length::Fill),
             prompt_action_button(
@@ -459,12 +464,19 @@ pub fn rebase_prompt<'a>(prompt: &'a RebasePrompt, loading: bool) -> Element<'a,
     .into()
 }
 
-fn rebase_prompt_preview<'a>(prompt: &'a RebasePrompt) -> Element<'a, Message> {
+fn rebase_prompt_preview<'a>(
+    prompt: &'a RebasePrompt,
+    avatars: &'a AvatarCache,
+) -> Element<'a, Message> {
     let mut rows = column![].spacing(0);
-    for row in &prompt.preview_rows {
-        rows = rows.push(rebase_prompt_preview_row(row));
+    for (index, row) in prompt.preview_rows.iter().enumerate() {
+        if index > 0 {
+            rows = rows.push(rebase_prompt_row_separator());
+        }
+        rows = rows.push(rebase_prompt_preview_row(row, avatars));
     }
     if prompt.hidden_row_count > 0 {
+        rows = rows.push(rebase_prompt_row_separator());
         rows = rows.push(rebase_prompt_preview_footer(prompt.hidden_row_count));
     }
 
@@ -475,17 +487,36 @@ fn rebase_prompt_preview<'a>(prompt: &'a RebasePrompt) -> Element<'a, Message> {
         .into()
 }
 
-fn rebase_prompt_preview_row<'a>(row_data: &'a crate::RebasePromptRow) -> Element<'a, Message> {
+/// Hairline between preview rows so each commit reads as its own entry.
+fn rebase_prompt_row_separator<'a>() -> Element<'a, Message> {
+    container(Space::new(Length::Fill, Length::Fixed(1.0)))
+        .width(Length::Fill)
+        .style(styles::solid_bar(color::with_alpha(color::BORDER, 0.55)))
+        .into()
+}
+
+fn rebase_prompt_preview_row<'a>(
+    row_data: &'a crate::RebasePromptRow,
+    avatars: &'a AvatarCache,
+) -> Element<'a, Message> {
+    let action_tint = rebase_prompt_action_color(row_data.action);
     let action = container(
         text(action_token(row_data.action))
             .size(theme::FS_XS)
             .font(theme::font_semibold())
-            .color(rebase_prompt_action_color(row_data.action))
+            .color(action_tint)
             .wrapping(Wrapping::None),
     )
-    .center_x(Length::Fixed(54.0))
+    .center_x(Length::Fixed(56.0))
     .padding(Padding::from([3, 0]))
-    .style(styles::rebase_prompt_action_chip);
+    .style(styles::rebase_prompt_action_chip(action_tint));
+
+    let avatar = super::commit_list::avatar_badge(
+        &row_data.author_name,
+        row_data.author_avatar_url.as_deref(),
+        avatars,
+        color::with_alpha(color::BORDER, 0.9),
+    );
 
     let sha = text(row_data.short_id.clone())
         .size(theme::FS_SM)
@@ -493,11 +524,16 @@ fn rebase_prompt_preview_row<'a>(row_data: &'a crate::RebasePromptRow) -> Elemen
         .color(color::TEXT_MUTED)
         .wrapping(Wrapping::None);
 
+    let dropped = row_data.action == RebaseAction::Drop;
     let summary: Element<'a, Message> = container(
         text(row_data.summary.clone())
             .size(theme::FS_SM)
             .font(theme::font_regular())
-            .color(color::TEXT)
+            .color(if dropped {
+                color::with_alpha(color::TEXT, 0.55)
+            } else {
+                color::TEXT
+            })
             .wrapping(Wrapping::None),
     )
     .width(Length::Fill)
@@ -505,12 +541,17 @@ fn rebase_prompt_preview_row<'a>(row_data: &'a crate::RebasePromptRow) -> Elemen
     .into();
 
     container(
-        row![action, container(sha).width(Length::Fixed(58.0)), summary,]
-            .align_y(Alignment::Center)
-            .spacing(theme::SP_SM),
+        row![
+            action,
+            avatar,
+            container(sha).width(Length::Fixed(58.0)),
+            summary,
+        ]
+        .align_y(Alignment::Center)
+        .spacing(theme::SP_SM),
     )
-    .height(Length::Fixed(30.0))
-    .padding(Padding::from([0, 8]))
+    .height(Length::Fixed(34.0))
+    .padding(Padding::from([0, 10]))
     .width(Length::Fill)
     .style(styles::rebase_prompt_preview_row)
     .into()

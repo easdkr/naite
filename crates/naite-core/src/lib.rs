@@ -22,7 +22,9 @@ mod worktrees;
 #[cfg(test)]
 mod test_helpers;
 
-pub use commits::{CommitMessage, CommitPage, CommitPageCursor, CommitSummary};
+pub use commits::{
+    author_avatar_url_from_email, CommitMessage, CommitPage, CommitPageCursor, CommitSummary,
+};
 pub use diff::{ChangeStatus, CommitDiff, DiffLine, FileChange, Hunk};
 pub use error::Error;
 pub use file_inspect::{BlameLine, FileHistoryEntry};

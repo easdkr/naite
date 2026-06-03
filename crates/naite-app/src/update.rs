@@ -421,7 +421,7 @@ impl App {
         }
     }
 
-    fn known_author_avatar_urls_for_path(&self, path: &Path) -> HashMap<String, String> {
+    pub(crate) fn known_author_avatar_urls_for_path(&self, path: &Path) -> HashMap<String, String> {
         let mut known = persistence::load_avatar_urls().unwrap_or_default();
         let source = if self.repo.path.as_deref() == Some(path) {
             Some(&self.repo)
@@ -441,12 +441,18 @@ impl App {
     }
 
     pub(crate) fn commit_author_avatar_key(commit: &CommitSummary) -> Option<String> {
-        let email = commit.author_email.trim();
+        Self::author_avatar_key(&commit.author_email, &commit.author_name)
+    }
+
+    /// Cache key for the persisted author→avatar-URL map, shared by every
+    /// surface that resolves avatars (commit list, rebase plan).
+    pub(crate) fn author_avatar_key(author_email: &str, author_name: &str) -> Option<String> {
+        let email = author_email.trim();
         if !email.is_empty() {
             return Some(format!("email:{}", email.to_ascii_lowercase()));
         }
 
-        let name = commit.author_name.trim();
+        let name = author_name.trim();
         (!name.is_empty()).then(|| format!("name:{}", name.to_ascii_lowercase()))
     }
 

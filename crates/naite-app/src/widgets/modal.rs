@@ -12,10 +12,17 @@ use crate::theme::{self, color};
 use crate::Message;
 
 const MODAL_MAX_WIDTH: f32 = 480.0;
+/// Wider card for content-heavy confirmations (e.g. the rebase plan preview)
+/// where per-row columns need horizontal room to stay on one line.
+const MODAL_WIDE_MAX_WIDTH: f32 = 680.0;
 const MODAL_ENTRY_FRAMES: f32 = 10.0;
 
 pub fn modal<'a>(content: Element<'a, Message>, on_dismiss: Message) -> Element<'a, Message> {
-    modal_with_progress(content, on_dismiss, 1.0)
+    modal_with_progress(content, on_dismiss, 1.0, MODAL_MAX_WIDTH)
+}
+
+pub fn wide_modal<'a>(content: Element<'a, Message>, on_dismiss: Message) -> Element<'a, Message> {
+    modal_with_progress(content, on_dismiss, 1.0, MODAL_WIDE_MAX_WIDTH)
 }
 
 pub fn animated_modal<'a>(
@@ -24,13 +31,19 @@ pub fn animated_modal<'a>(
     frame: usize,
 ) -> Element<'a, Message> {
     let progress = (frame as f32 / MODAL_ENTRY_FRAMES).clamp(0.0, 1.0);
-    modal_with_progress(content, on_dismiss, ease_out_cubic(progress))
+    modal_with_progress(
+        content,
+        on_dismiss,
+        ease_out_cubic(progress),
+        MODAL_MAX_WIDTH,
+    )
 }
 
 fn modal_with_progress<'a>(
     content: Element<'a, Message>,
     on_dismiss: Message,
     progress: f32,
+    max_width: f32,
 ) -> Element<'a, Message> {
     let backdrop: Element<'a, Message> = mouse_area(
         container(Space::new(Length::Fill, Length::Fill))
@@ -44,7 +57,7 @@ fn modal_with_progress<'a>(
     let card_surface: Element<'a, Message> = mouse_area(
         container(content)
             .width(Length::Fill)
-            .max_width(MODAL_MAX_WIDTH)
+            .max_width(max_width)
             .padding(Padding::from(theme::SP_LG))
             .style(move |_| card_progress_style(progress)),
     )

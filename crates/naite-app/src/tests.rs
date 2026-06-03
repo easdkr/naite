@@ -266,6 +266,7 @@ fn rebase_row_with_author(
             author_name: author_name.into(),
             author_email: author_email.into(),
         },
+        author_avatar_url: None,
     }
 }
 
@@ -4799,6 +4800,7 @@ fn production_release_prepare_applies_post_sync_repo_snapshot_before_rebase() {
                 author_name: "naite".into(),
                 author_email: "naite@example.com".into(),
             },
+            author_avatar_url: None,
         }],
         repo_snapshot: (
             path,

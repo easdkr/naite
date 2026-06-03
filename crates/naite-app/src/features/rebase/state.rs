@@ -34,6 +34,10 @@ pub struct InteractiveRebaseSession {
 pub struct RebasePlanRow {
     pub action: RebaseAction,
     pub commit: HistoryCommit,
+    /// Author avatar resolved after the session loads: from the persisted
+    /// avatar cache, the loaded commit list, a noreply-email fallback, or a
+    /// GitHub GraphQL lookup for commits none of those cover.
+    pub author_avatar_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

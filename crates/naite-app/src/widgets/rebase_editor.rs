@@ -12,14 +12,14 @@ use crate::features::rebase::{
     self, DragState, InteractiveRebaseSession, RebaseApplyMode, RebasePlanPreset, RebasePlanRow,
 };
 use crate::icons::{self, IconName};
-use crate::state::{DiffViewMode, FileInsightState};
+use crate::state::{AvatarCache, DiffViewMode, FileInsightState};
 use crate::styles;
 use crate::theme::{self, color};
 use crate::Message;
 
 use super::commit_list::{
-    fill_horizontal_segment, fill_vertical_segment, graph_fill, graph_stroke, lane_x, snap,
-    GRAPH_CORNER_RADIUS, GRAPH_LANE_GAP,
+    fill_horizontal_segment, fill_vertical_segment, graph_fill, graph_stroke, lane_avatar, lane_x,
+    snap, GRAPH_CORNER_RADIUS, GRAPH_LANE_GAP,
 };
 use super::detail_pane::{diff_content, DiffContentProps};
 use super::ROW_HEIGHT;
@@ -32,17 +32,20 @@ const GHOST_HORIZONTAL_INSET: f32 = 8.0;
 const REBASE_TOOLBAR_HEIGHT: f32 = 56.0;
 /// Width of the per-row graph gutter that visualizes squash/fixup grouping.
 /// Sized to fit two lanes (`GRAPH_LANE_LEFT=11 + GRAPH_LANE_GAP=22 = 33`) plus
-/// the node radius (~5) and a small right pad.
-const REBASE_GUTTER_WIDTH: f32 = 42.0;
-/// Radius of the dot drawn at each row's lane in the gutter. Smaller than the
-/// commit-list avatar (which doubles as the node there) because the rebase
-/// gutter has no author info — the dot is purely a topological marker.
+/// half an author avatar (~11) and a small right pad, so the lane-1 avatar
+/// doesn't clip against the gutter's right edge.
+const REBASE_GUTTER_WIDTH: f32 = 48.0;
+/// Radius of the dot drawn at each row's lane in the gutter. The author
+/// avatar is stacked on top of it (mirroring the commit list, where the
+/// avatar doubles as the node); the dot remains as a topological marker
+/// underneath while the avatar image loads.
 const REBASE_NODE_RADIUS: f32 = 4.5;
 
 pub fn rebase_editor<'a>(
     session: &'a InteractiveRebaseSession,
     cursor: Option<Point>,
     release_promotion_active: bool,
+    avatars: &'a AvatarCache,
 ) -> Element<'a, Message> {
     let active_gap = active_insertion_gap(session);
     let actions: Vec<RebaseAction> = session.plan.iter().map(|row| row.action).collect();
@@ -58,7 +61,14 @@ pub fn rebase_editor<'a>(
             total_lanes: 1,
         });
         let inherits_reword = pick_inherits_reword(&actions, index);
-        body = body.push(plan_row(session, row, index, gutter, inherits_reword));
+        body = body.push(plan_row(
+            session,
+            row,
+            index,
+            gutter,
+            inherits_reword,
+            avatars,
+        ));
         body = body.push(insertion_gap(active_gap == Some(index + 1)));
     }
 
@@ -193,8 +203,8 @@ fn ghost_row<'a>(row_data: &'a RebasePlanRow) -> Element<'a, Message> {
 /// [`naite_core::build_rebase_gutter`] — trunk picks on lane 0, squash/fixup
 /// children on lane 1, with an elbow drawn on the parent pick's row spawning
 /// lane 1 down to the first child below it. Mirrors `GraphCanvas` in
-/// `commit_list.rs` but with a smaller node gap because the rebase gutter has
-/// no author avatar to fill the dot.
+/// `commit_list.rs`; the author avatar is stacked on top of the node dot by
+/// `plan_row`, matching the commit list.
 #[derive(Debug, Clone)]
 struct RebaseGutterCanvas {
     row: GraphRow,
@@ -599,6 +609,7 @@ fn plan_row<'a>(
     index: usize,
     gutter_row: GraphRow,
     inherits_reword: bool,
+    avatars: &'a AvatarCache,
 ) -> Element<'a, Message> {
     let selected = session.selected == index;
     let drag_active = session.drag.as_ref().is_some_and(|drag| drag.started);
@@ -614,10 +625,24 @@ fn plan_row<'a>(
     let bar = container(Space::new(Length::Fixed(2.0), Length::Fixed(ROW_HEIGHT)))
         .style(styles::solid_bar(bar_color));
 
-    let gutter = canvas(RebaseGutterCanvas {
+    let gutter_lane = gutter_row.lane;
+    let gutter_canvas = canvas(RebaseGutterCanvas {
         row: gutter_row,
         muted: row_data.action == RebaseAction::Drop,
     })
+    .width(Length::Fixed(REBASE_GUTTER_WIDTH))
+    .height(Length::Fixed(ROW_HEIGHT));
+    let gutter = stack![
+        gutter_canvas,
+        lane_avatar(
+            &row_data.commit.author_name,
+            row_data.author_avatar_url.as_deref(),
+            avatars,
+            gutter_lane,
+            GRAPH_LANE_GAP,
+            REBASE_GUTTER_WIDTH,
+        )
+    ]
     .width(Length::Fixed(REBASE_GUTTER_WIDTH))
     .height(Length::Fixed(ROW_HEIGHT));
 

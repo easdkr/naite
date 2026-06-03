@@ -87,6 +87,7 @@ impl App {
                             session,
                             self.selection.cursor_position,
                             self.release_prep.active_profile.is_some(),
+                            &self.avatars,
                         )
                     } else if self.workspace.dashboard_open {
                         widgets::workspace_dashboard(
@@ -348,8 +349,8 @@ impl App {
         }
 
         if let Some(prompt) = &self.selection.rebase_confirmation {
-            overlays.push(widgets::modal(
-                widgets::rebase_prompt(prompt, self.operation.loading),
+            overlays.push(widgets::wide_modal(
+                widgets::rebase_prompt(prompt, &self.avatars, self.operation.loading),
                 Message::from(rebase::Message::ApplyCancelled),
             ));
         }

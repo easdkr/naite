@@ -191,7 +191,22 @@ impl App {
                     status.push_str(&format!("; backup {backup}"));
                 }
                 self.set_transient_status(status);
-                self.load_selected_rebase_diff()
+                // The snapshot replaced the commit list, so re-run the same
+                // avatar pipeline the repo-open path uses (image prefetch for
+                // preserved URLs + provider lookup for uncached authors)
+                // alongside the rebase plan's own resolution.
+                let commit_avatar_task = self.prefetch_commit_avatars();
+                let provider_commit_avatar_task = match self.repo.path.clone() {
+                    Some(path) => self.load_provider_commit_author_avatars(path),
+                    None => Task::none(),
+                };
+                let avatar_fetches = self.resolve_rebase_plan_avatars();
+                Task::batch([
+                    commit_avatar_task,
+                    provider_commit_avatar_task,
+                    avatar_fetches,
+                    self.load_selected_rebase_diff(),
+                ])
             }
             Err(message) => {
                 self.release_prep.phase = ReleasePrepPhase::Configuring;
@@ -212,7 +227,7 @@ impl App {
     fn apply_release_prep_repo_snapshot(&mut self, snapshot: repo_open::LoadedRepo) {
         let (
             path,
-            commits,
+            mut commits,
             commit_page_cursor,
             refs,
             stashes,
@@ -223,6 +238,10 @@ impl App {
             operation_state,
         ) = snapshot;
 
+        // The snapshot comes fresh from git with only noreply-derived avatar
+        // URLs; restore the provider-resolved ones so the commit graph keeps
+        // its avatars across the release-prep reload.
+        self.preserve_known_commit_avatar_urls(&path, &mut commits);
         self.repo.path = Some(path.clone());
         self.repo.commits = commits;
         self.repo.commit_page_cursor = commit_page_cursor;

@@ -37,7 +37,8 @@ impl App {
                     applying: false,
                     scroll_offset: 0.0,
                 });
-                self.load_selected_rebase_diff()
+                let avatar_fetches = self.resolve_rebase_plan_avatars();
+                Task::batch([avatar_fetches, self.load_selected_rebase_diff()])
             }
             RebaseMessage::LoadFailed(message) => {
                 self.operation.loading = false;
@@ -428,6 +429,53 @@ impl App {
         Task::none()
     }
 
+    /// Resolve avatar URLs for every author in the active rebase plan and
+    /// kick off the image fetches. Resolution order matches the commit list:
+    /// the persisted/known author cache first, then the noreply-email
+    /// derivation, and finally the GitHub GraphQL lookup (`gh api graphql`)
+    /// for commits neither covers.
+    pub(crate) fn resolve_rebase_plan_avatars(&mut self) -> Task<Message> {
+        let Some(path) = self.repo.path.clone() else {
+            return Task::none();
+        };
+        let known = self.known_author_avatar_urls_for_path(&path);
+
+        let mut urls = Vec::new();
+        let mut unresolved_commit_ids = Vec::new();
+        if let Some(session) = self.rebase.as_mut() {
+            for row in &mut session.plan {
+                let resolved =
+                    Self::author_avatar_key(&row.commit.author_email, &row.commit.author_name)
+                        .and_then(|key| known.get(&key).cloned())
+                        .or_else(|| {
+                            naite_core::author_avatar_url_from_email(&row.commit.author_email)
+                        });
+                match resolved {
+                    Some(url) => {
+                        urls.push(url.clone());
+                        row.author_avatar_url = Some(url);
+                    }
+                    None => unresolved_commit_ids.push(row.commit.id.clone()),
+                }
+            }
+        }
+
+        let image_fetches = Task::batch(
+            urls.iter()
+                .map(|url| self.maybe_fetch_avatar(Some(url.as_str()))),
+        );
+        if unresolved_commit_ids.is_empty() {
+            return image_fetches;
+        }
+        let provider_lookup = Task::perform(
+            repo_open::task::load_commit_author_avatars(path, unresolved_commit_ids),
+            |(path, result)| {
+                Message::from(repo_open::Message::CommitAuthorAvatarsLoaded { path, result })
+            },
+        );
+        Task::batch([image_fetches, provider_lookup])
+    }
+
     fn apply_rebase_plan(&mut self) -> Task<Message> {
         let Some(session) = self.rebase.as_mut() else {
             return Task::none();
@@ -733,7 +781,7 @@ fn plan_counts(session: &InteractiveRebaseSession) -> String {
 }
 
 const REBASE_PROMPT_PREVIEW_LIMIT: usize = 8;
-const REBASE_PROMPT_SUMMARY_MAX_CHARS: usize = 72;
+const REBASE_PROMPT_SUMMARY_MAX_CHARS: usize = 96;
 
 fn rebase_prompt_preview(session: &InteractiveRebaseSession) -> (Vec<RebasePromptRow>, usize) {
     let rows = session
@@ -744,6 +792,8 @@ fn rebase_prompt_preview(session: &InteractiveRebaseSession) -> (Vec<RebasePromp
             action: row.action,
             short_id: short_id(&row.commit.id),
             summary: compact_end(&row.commit.summary, REBASE_PROMPT_SUMMARY_MAX_CHARS),
+            author_name: row.commit.author_name.clone(),
+            author_avatar_url: row.author_avatar_url.clone(),
         })
         .collect::<Vec<_>>();
     let hidden = session.plan.len().saturating_sub(rows.len());
@@ -786,7 +836,7 @@ mod tests {
 
     #[test]
     fn rebase_prompt_preview_compacts_long_summary() {
-        let long_summary = "a".repeat(90);
+        let long_summary = "a".repeat(120);
         let session = session_with_rows(vec![plan_row(
             "abcdef1234567890",
             RebaseAction::Drop,
@@ -862,6 +912,7 @@ mod tests {
                 author_name: "june".into(),
                 author_email: "june@example.com".into(),
             },
+            author_avatar_url: None,
         }
     }
 

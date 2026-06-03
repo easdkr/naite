@@ -213,7 +213,11 @@ fn parse_commit_log(output: &str) -> Result<Vec<CommitSummary>, Error> {
     Ok(commits)
 }
 
-fn author_avatar_url_from_email(email: &str) -> Option<String> {
+/// Derive a GitHub avatar URL from a `users.noreply.github.com` author email.
+/// Returns `None` for any other address. Public so app surfaces that only
+/// carry an author email (e.g. rebase plan rows) can resolve the same avatar
+/// as the commit list.
+pub fn author_avatar_url_from_email(email: &str) -> Option<String> {
     let local = email
         .trim()
         .strip_suffix("@users.noreply.github.com")?

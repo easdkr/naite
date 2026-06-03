@@ -805,12 +805,28 @@ fn author_avatar<'a>(
     lane: u8,
     graph_metrics: GraphMetrics,
 ) -> Element<'a, Message> {
+    lane_avatar(
+        &commit.author_name,
+        commit.author_avatar_url.as_deref(),
+        avatars,
+        lane,
+        graph_metrics.lane_gap,
+        graph_metrics.width,
+    )
+}
+
+/// Round author badge: the cached avatar image when available, otherwise the
+/// author's initials. Shared by the commit list, the rebase editor gutter,
+/// and the rebase confirmation prompt.
+pub(crate) fn avatar_badge<'a>(
+    author_name: &str,
+    avatar_url: Option<&str>,
+    avatars: &AvatarCache,
+    border_color: Color,
+) -> Element<'a, Message> {
     let image_size = Length::Fixed(COMMIT_AVATAR_SIZE);
     let visual_size = Length::Fixed(AVATAR_VISUAL_SIZE);
-    let border_color = color::LANES[lane as usize % color::LANES.len()];
-    let content: Element<'a, Message> = commit
-        .author_avatar_url
-        .as_deref()
+    avatar_url
         .and_then(|url| avatars.handles.get(url))
         .map(|handle| {
             stack![
@@ -835,7 +851,7 @@ fn author_avatar<'a>(
         .unwrap_or_else(|| {
             container(
                 container(
-                    text(author_initials(&commit.author_name))
+                    text(author_initials(author_name))
                         .size(theme::FS_XS)
                         .font(theme::font_semibold())
                         .color(color::TEXT),
@@ -852,17 +868,31 @@ fn author_avatar<'a>(
             .center_y(visual_size)
             .style(move |_| avatar_border_overlay_style(border_color))
             .into()
-        });
+        })
+}
 
-    let lane_center = lane_x(lane, graph_metrics.lane_gap);
-    let leading = snap((lane_center - AVATAR_VISUAL_SIZE / 2.0).clamp(0.0, graph_metrics.width));
+/// An [`avatar_badge`] positioned over a graph canvas so it sits centered on
+/// the row's lane, ring-tinted with the lane color.
+pub(crate) fn lane_avatar<'a>(
+    author_name: &str,
+    avatar_url: Option<&str>,
+    avatars: &AvatarCache,
+    lane: u8,
+    lane_gap: f32,
+    width: f32,
+) -> Element<'a, Message> {
+    let border_color = color::LANES[lane as usize % color::LANES.len()];
+    let content = avatar_badge(author_name, avatar_url, avatars, border_color);
+
+    let lane_center = lane_x(lane, lane_gap);
+    let leading = snap((lane_center - AVATAR_VISUAL_SIZE / 2.0).clamp(0.0, width));
     container(
         row![Space::with_width(Length::Fixed(leading)), content]
             .align_y(Alignment::Center)
-            .width(Length::Fixed(graph_metrics.width))
+            .width(Length::Fixed(width))
             .height(Length::Fixed(ROW_HEIGHT)),
     )
-    .width(Length::Fixed(graph_metrics.width))
+    .width(Length::Fixed(width))
     .height(Length::Fixed(ROW_HEIGHT))
     .into()
 }

@@ -32,7 +32,7 @@ pub use forms::{
     pull_request_worktree_prompt, stash_branch_prompt, stash_create_prompt, tag_create_prompt,
     worktree_create_prompt,
 };
-pub use modal::{animated_modal, modal};
+pub use modal::{animated_modal, modal, wide_modal};
 pub use preferences::{display_options_panel, shortcut_help_overlay};
 pub use prompts::{
     branch_delete_prompt, checkout_prompt, discard_prompt, force_push_prompt, force_sync_prompt,

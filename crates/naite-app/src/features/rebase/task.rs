@@ -44,6 +44,7 @@ pub(crate) async fn load_plan(
                             author_name: entry.author_name,
                             author_email: entry.author_email,
                         },
+                        author_avatar_url: None,
                     })
                     .collect()
             })?;
