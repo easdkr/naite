@@ -206,10 +206,6 @@ impl App {
                 }
             }
             RepoOpenMessage::CommitAuthorAvatarsLoaded { path, result } => {
-                if self.repo.path.as_ref() != Some(&path) {
-                    return Task::none();
-                }
-
                 let avatars = match result {
                     Ok(avatars) => avatars,
                     Err(err) => {
@@ -244,12 +240,27 @@ impl App {
                     return Task::none();
                 }
 
-                for commit in &mut self.repo.commits {
+                let target_state = if self.repo.path.as_ref() == Some(&path) {
+                    Some(&mut self.repo)
+                } else {
+                    self.tabs.cache.get_mut(&path)
+                };
+                let Some(target_state) = target_state else {
+                    return Task::none();
+                };
+
+                let mut urls = Vec::new();
+                for commit in &mut target_state.commits {
                     if let Some(url) = by_commit.get(&commit.id) {
                         commit.author_avatar_url = Some(url.clone());
+                        urls.push(url.clone());
                     }
                 }
-                self.prefetch_commit_avatars()
+
+                Task::batch(
+                    urls.iter()
+                        .map(|url| self.maybe_fetch_avatar(Some(url.as_str()))),
+                )
             }
             RepoOpenMessage::ToggleFavorite(path) => {
                 self.catalog.toggle_favorite(path);
@@ -347,9 +358,15 @@ impl App {
     }
 
     pub(crate) fn load_provider_commit_author_avatars(&self, path: PathBuf) -> Task<Message> {
-        let commit_ids: Vec<String> = self
-            .repo
-            .commits
+        self.load_provider_commit_author_avatars_for_commits(path, &self.repo.commits)
+    }
+
+    pub(crate) fn load_provider_commit_author_avatars_for_commits(
+        &self,
+        path: PathBuf,
+        commits: &[naite_core::CommitSummary],
+    ) -> Task<Message> {
+        let commit_ids: Vec<String> = commits
             .iter()
             .filter(|commit| commit.author_avatar_url.is_none())
             .map(|commit| commit.id.clone())

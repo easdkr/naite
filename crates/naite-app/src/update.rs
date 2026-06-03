@@ -1385,6 +1385,11 @@ impl App {
                             .map(|active| active == loaded_path.as_path())
                             .unwrap_or(false);
                         self.preserve_known_commit_avatar_urls(&loaded_path, &mut commits);
+                        let provider_commit_avatar_task = self
+                            .load_provider_commit_author_avatars_for_commits(
+                                loaded_path.clone(),
+                                &commits,
+                            );
 
                         let target_state: Option<&mut RepositoryState> = if is_active {
                             Some(&mut self.repo)
@@ -1410,10 +1415,10 @@ impl App {
                             self.refresh_graph_layout();
                             return Task::batch([
                                 self.prefetch_commit_avatars(),
-                                self.load_provider_commit_author_avatars(path),
+                                provider_commit_avatar_task,
                             ]);
                         }
-                        Task::none()
+                        provider_commit_avatar_task
                     }
                     Err(msg) => {
                         self.set_transient_status(format!("Tab refresh failed: {msg}"));

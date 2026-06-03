@@ -11,9 +11,9 @@ use iced::keyboard::{
 };
 use iced::window;
 use naite_core::{
-    BranchSyncStatus, ChangeStatus, CommitDiff, CommitPage, CommitPageCursor, CommitSummary,
-    DiffLine, FileChange, GitOperationState, HistoryCommit, Hunk, RebaseAction, RefKind,
-    RefSummary, Refs, ReleaseBranchSync, ReleaseProfile, ReleaseSyncCheck, StashSummary,
+    BranchSyncStatus, ChangeStatus, CommitAuthorAvatar, CommitDiff, CommitPage, CommitPageCursor,
+    CommitSummary, DiffLine, FileChange, GitOperationState, HistoryCommit, Hunk, RebaseAction,
+    RefKind, RefSummary, Refs, ReleaseBranchSync, ReleaseProfile, ReleaseSyncCheck, StashSummary,
     StatusEntry, StatusKind, WorkspaceRepoSummary, WorktreeDiffKind, WorktreeDiffTarget,
     WorktreeStatus, WorktreeStatusDetail, WorktreeSummary,
 };
@@ -658,6 +658,47 @@ fn tab_refresh_prefetches_preserved_commit_avatars_for_active_tab() {
 
     assert_eq!(
         app.repo.commits[0].author_avatar_url.as_deref(),
+        Some(provider_avatar_url.as_str())
+    );
+    assert!(app.avatars.in_flight.contains(&provider_avatar_url));
+}
+
+#[test]
+fn provider_avatar_results_update_cached_inactive_tab() {
+    let active_path = PathBuf::from("/tmp/repo-active");
+    let cached_path = PathBuf::from("/tmp/repo-cached");
+    let provider_avatar_url = "https://avatars.githubusercontent.com/u/1?v=4".to_string();
+    let cached_commit = commit("b222222", "update graph", "octocat");
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(active_path.clone()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    app.tabs.active = Some(active_path);
+    app.tabs.cache.insert(
+        cached_path.clone(),
+        RepositoryState {
+            path: Some(cached_path.clone()),
+            commits: vec![cached_commit],
+            ..Default::default()
+        },
+    );
+
+    let _ = app.update(Message::from(
+        repo_open::Message::CommitAuthorAvatarsLoaded {
+            path: cached_path.clone(),
+            result: Ok(vec![CommitAuthorAvatar {
+                commit_id: "b222222".into(),
+                author_avatar_url: Some(provider_avatar_url.clone()),
+            }]),
+        },
+    ));
+
+    let cached = app.tabs.cache.get(&cached_path).unwrap();
+    assert_eq!(
+        cached.commits[0].author_avatar_url.as_deref(),
         Some(provider_avatar_url.as_str())
     );
     assert!(app.avatars.in_flight.contains(&provider_avatar_url));
