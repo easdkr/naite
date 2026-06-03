@@ -366,14 +366,16 @@ pub fn discard_prompt<'a>(prompt: &'a DiscardPrompt, loading: bool) -> Element<'
                     .font(theme::font_regular())
                     .color(color::TEXT_MUTED),
             ]
+            .width(Length::Fill)
             .spacing(2),
-            Space::with_width(Length::Fill),
-            button(text("Cancel").size(theme::FS_SM))
+            button(text("Cancel").size(theme::FS_SM).wrapping(Wrapping::None))
                 .padding(Padding::from([5, 10]))
+                .width(Length::Fixed(88.0))
                 .style(styles::subtle_button)
                 .on_press(Message::from(discard::Message::Cancelled)),
-            button(text("Discard").size(theme::FS_SM))
+            button(text("Discard").size(theme::FS_SM).wrapping(Wrapping::None))
                 .padding(Padding::from([5, 10]))
+                .width(Length::Fixed(104.0))
                 .style(styles::danger_button)
                 .on_press_maybe((!loading).then_some(Message::from(discard::Message::Confirmed))),
         ]
