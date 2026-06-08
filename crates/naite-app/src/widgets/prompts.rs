@@ -1,6 +1,6 @@
 //! Confirmation modals: force-checkout, branch delete, discard, and stash prompts.
 
-use iced::widget::{button, column, container, row, text, Space};
+use iced::widget::{button, column, container, row, scrollable, text, Space};
 use iced::widget::{button as iced_button, text::Wrapping};
 use iced::{Alignment, Color, Element, Length, Padding, Theme};
 use naite_core::{DiffLine, RebaseAction, WorktreeDiffKind};
@@ -464,6 +464,12 @@ pub fn rebase_prompt<'a>(
     .into()
 }
 
+/// Cap the preview list height so a long rebase plan scrolls inside the modal
+/// instead of pushing the confirm/cancel buttons off-screen. ~11 rows at the
+/// 34px row height + 1px separators; fits within the 900x600 min window once
+/// the title/detail/buttons/padding overhead is accounted for.
+const REBASE_PROMPT_PREVIEW_MAX_HEIGHT: f32 = 400.0;
+
 fn rebase_prompt_preview<'a>(
     prompt: &'a RebasePrompt,
     avatars: &'a AvatarCache,
@@ -475,13 +481,14 @@ fn rebase_prompt_preview<'a>(
         }
         rows = rows.push(rebase_prompt_preview_row(row, avatars));
     }
-    if prompt.hidden_row_count > 0 {
-        rows = rows.push(rebase_prompt_row_separator());
-        rows = rows.push(rebase_prompt_preview_footer(prompt.hidden_row_count));
-    }
 
-    container(rows)
+    let list = scrollable(rows)
+        .direction(styles::thin_scrollbar_dir())
+        .style(styles::thin_scrollbar);
+
+    container(list)
         .padding(Padding::from([4, 0]))
+        .max_height(REBASE_PROMPT_PREVIEW_MAX_HEIGHT)
         .width(Length::Fill)
         .style(styles::rebase_prompt_preview_surface)
         .into()
@@ -554,21 +561,6 @@ fn rebase_prompt_preview_row<'a>(
     .padding(Padding::from([0, 10]))
     .width(Length::Fill)
     .style(styles::rebase_prompt_preview_row)
-    .into()
-}
-
-fn rebase_prompt_preview_footer<'a>(hidden_count: usize) -> Element<'a, Message> {
-    container(
-        text(format!("+{hidden_count} more operations"))
-            .size(theme::FS_XS)
-            .font(theme::font_regular())
-            .color(color::TEXT_SUBTLE)
-            .wrapping(Wrapping::None),
-    )
-    .height(Length::Fixed(24.0))
-    .padding(Padding::from([0, 8]))
-    .width(Length::Fill)
-    .style(styles::rebase_prompt_preview_footer)
     .into()
 }
 

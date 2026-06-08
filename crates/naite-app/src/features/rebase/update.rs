@@ -410,7 +410,7 @@ impl App {
                 " After it succeeds, naite will update and push the target, then rebase and push the source."
             }
         };
-        let (preview_rows, hidden_row_count) = rebase_prompt_preview(session);
+        let preview_rows = rebase_prompt_preview(session);
         self.selection.rebase_confirmation = Some(RebasePrompt {
             title: format!(
                 "Interactive rebase {} onto {}",
@@ -423,7 +423,6 @@ impl App {
                 follow_up
             ),
             preview_rows,
-            hidden_row_count,
             apply_mode,
         });
         Task::none()
@@ -780,14 +779,12 @@ fn plan_counts(session: &InteractiveRebaseSession) -> String {
     )
 }
 
-const REBASE_PROMPT_PREVIEW_LIMIT: usize = 8;
 const REBASE_PROMPT_SUMMARY_MAX_CHARS: usize = 96;
 
-fn rebase_prompt_preview(session: &InteractiveRebaseSession) -> (Vec<RebasePromptRow>, usize) {
-    let rows = session
+fn rebase_prompt_preview(session: &InteractiveRebaseSession) -> Vec<RebasePromptRow> {
+    session
         .plan
         .iter()
-        .take(REBASE_PROMPT_PREVIEW_LIMIT)
         .map(|row| RebasePromptRow {
             action: row.action,
             short_id: short_id(&row.commit.id),
@@ -795,9 +792,7 @@ fn rebase_prompt_preview(session: &InteractiveRebaseSession) -> (Vec<RebasePromp
             author_name: row.commit.author_name.clone(),
             author_avatar_url: row.author_avatar_url.clone(),
         })
-        .collect::<Vec<_>>();
-    let hidden = session.plan.len().saturating_sub(rows.len());
-    (rows, hidden)
+        .collect()
 }
 
 fn compact_end(value: &str, max_chars: usize) -> String {
@@ -843,9 +838,8 @@ mod tests {
             &long_summary,
         )]);
 
-        let (rows, hidden_count) = rebase_prompt_preview(&session);
+        let rows = rebase_prompt_preview(&session);
 
-        assert_eq!(hidden_count, 0);
         assert_eq!(rows.len(), 1);
         assert_eq!(
             rows[0].summary.chars().count(),
@@ -855,7 +849,7 @@ mod tests {
     }
 
     #[test]
-    fn rebase_prompt_preview_limits_rows_and_counts_hidden() {
+    fn rebase_prompt_preview_returns_all_rows() {
         let rows = (0..10)
             .map(|index| {
                 plan_row(
@@ -867,10 +861,9 @@ mod tests {
             .collect();
         let session = session_with_rows(rows);
 
-        let (preview_rows, hidden_count) = rebase_prompt_preview(&session);
+        let preview_rows = rebase_prompt_preview(&session);
 
-        assert_eq!(preview_rows.len(), REBASE_PROMPT_PREVIEW_LIMIT);
-        assert_eq!(hidden_count, 2);
+        assert_eq!(preview_rows.len(), 10);
     }
 
     #[test]
@@ -881,9 +874,8 @@ mod tests {
             "rewrite commit message",
         )]);
 
-        let (rows, hidden_count) = rebase_prompt_preview(&session);
+        let rows = rebase_prompt_preview(&session);
 
-        assert_eq!(hidden_count, 0);
         assert_eq!(rows[0].action, RebaseAction::Reword);
         assert_eq!(rows[0].short_id, "1234567");
         assert_eq!(rows[0].summary, "rewrite commit message");
