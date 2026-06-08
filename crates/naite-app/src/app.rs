@@ -185,7 +185,6 @@ pub struct RebasePrompt {
     pub title: String,
     pub detail: String,
     pub preview_rows: Vec<RebasePromptRow>,
-    pub hidden_row_count: usize,
     pub apply_mode: RebaseApplyMode,
 }
 
