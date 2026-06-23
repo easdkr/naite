@@ -9426,7 +9426,8 @@ fn operation_tracker_fail_records_completion_with_fatal_severity() {
 
     assert_eq!(tracker.active().len(), 0);
     assert_eq!(tracker.recent(usize::MAX).len(), 1);
-    let completed = &tracker.recent(usize::MAX)[0];
+    let recent = tracker.recent(usize::MAX);
+    let completed = recent[0];
     assert_eq!(completed.severity, OpSeverity::Fatal);
     assert_eq!(completed.label, "rebase onto main");
     match &completed.result {
@@ -9489,4 +9490,23 @@ fn operation_tracker_dismiss_unknown_id_returns_error() {
     let result = tracker.dismiss(999);
 
     assert!(result.is_err());
+}
+
+#[test]
+fn operation_tracker_recent_returns_correct_entries_after_ring_wraparound() {
+    let mut tracker = OperationTracker::default();
+    let total = crate::theme::OP_HISTORY_CAP + 10;
+
+    for index in 0..total {
+        let id = tracker.start(OperationKind::AutoFetch, format!("op-{index}"));
+        tracker
+            .complete(id, OpResult::Success, OpSeverity::Recoverable)
+            .unwrap();
+    }
+
+    let recent3 = tracker.recent(3);
+    assert_eq!(recent3.len(), 3);
+    assert_eq!(recent3[0].label, format!("op-{}", total - 3));
+    assert_eq!(recent3[1].label, format!("op-{}", total - 2));
+    assert_eq!(recent3[2].label, format!("op-{}", total - 1));
 }

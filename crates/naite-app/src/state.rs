@@ -175,7 +175,12 @@ pub enum OperationKind {
     AutoFetch,
     ReleasePrep,
     ManualAction(&'static str),
-    Custom(String),
+}
+
+impl OperationKind {
+    pub fn shows_overlay_immediately(&self) -> bool {
+        matches!(self, Self::ReleasePrep)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -239,11 +244,11 @@ impl OperationTracker {
     /// through a `Message::Operation(Started { id, .. })` wire event so the
     /// global `update` arm can call `start_with_id` (preserves Elm-style
     /// routing — all mutations flow through `Message`).
-    pub fn next_id(&self) -> OperationId {
-        self.next_id.wrapping_add(1)
+    pub fn next_id(&mut self) -> OperationId {
+        self.next_id = self.next_id.wrapping_add(1);
+        self.next_id
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn start(&mut self, kind: OperationKind, label: impl Into<String>) -> OperationId {
         self.next_id = self.next_id.wrapping_add(1);
@@ -332,22 +337,18 @@ impl OperationTracker {
     }
 
     /// Returns the id of the in-flight operation whose central-progress
-    /// overlay should currently be rendered, if any. ReleasePrep operations
-    /// surface immediately; all other kinds wait `threshold_secs` of
-    /// elapsed time so a fast fetch (sub-second) doesn't flash the card.
-    /// Called once per `Message::TransientStatusTick`.
+    /// overlay should currently be rendered, if any. Operations whose
+    /// `OperationKind::shows_overlay_immediately()` returns true surface
+    /// without delay; all others wait `threshold_secs` of elapsed time
+    /// so a fast fetch (sub-second) doesn't flash the card.
     pub fn should_show_overlay(&self, threshold_secs: u64) -> Option<OperationId> {
         let threshold = Duration::from_secs(threshold_secs);
         self.in_flight
             .iter()
-            .find(|op| {
-                op.started_at.elapsed() >= threshold
-                    || matches!(op.kind, OperationKind::ReleasePrep)
-            })
+            .find(|op| op.started_at.elapsed() >= threshold || op.kind.shows_overlay_immediately())
             .map(|op| op.id)
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn fail(
         &mut self,
@@ -374,7 +375,6 @@ impl OperationTracker {
 
     /// Look up the in-flight id for `kind` and return a `Completed` event,
     /// or `None` if no operation of that kind is currently in flight.
-    #[allow(dead_code)]
     pub fn emit_completed(
         &self,
         kind: &OperationKind,
@@ -389,15 +389,18 @@ impl OperationTracker {
         })
     }
 
-    pub fn recent(&self, n: usize) -> &[CompletedOperation] {
+    pub fn recent(&self, n: usize) -> Vec<&CompletedOperation> {
         if n == 0 || self.history.is_empty() {
-            return &[];
+            return Vec::new();
         }
         let start = self.history.len().saturating_sub(n);
-        &self.history.as_slices().0[start..]
+        // Use `iter().skip(start)` instead of `as_slices().0[start..]`:
+        // once the VecDeque ring buffer wraps, `as_slices().0` is the first
+        // physical segment and may be shorter than `history.len()`, so
+        // indexing it with a logical index returns wrong data or panics.
+        self.history.iter().skip(start).collect()
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn active_long_running(&self, threshold_secs: u64) -> Option<&ActiveOperation> {
         let threshold = Duration::from_secs(threshold_secs);

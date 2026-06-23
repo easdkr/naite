@@ -50,7 +50,7 @@ impl App {
                 self.operation.error = Some(msg.clone());
                 let start = Task::done(Message::Operation(OperationEvent::Started {
                     id,
-                    kind: OperationKind::Custom("workspace_locate".to_string()),
+                    kind: OperationKind::ManualAction("workspace_locate"),
                     label: "Revealing repository in Finder…".to_string(),
                 }));
                 let complete = Task::done(Message::Operation(OperationEvent::Completed {

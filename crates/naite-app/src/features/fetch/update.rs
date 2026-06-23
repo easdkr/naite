@@ -37,6 +37,7 @@ impl App {
             }
             FetchMessage::Done { scope, result } => {
                 self.operation.loading = false;
+                let completion = self.complete_manual_fetch(&result);
                 match result {
                     Ok(()) => {
                         let status_message = self.fetch_success_message(scope);
@@ -44,18 +45,18 @@ impl App {
                             self.operation.pending_transient_status_after_reload =
                                 Some(status_message);
                             self.operation.loading = true;
-                            Task::perform(repo_open::task::load(path), |result| {
+                            completion.chain(Task::perform(repo_open::task::load(path), |result| {
                                 Message::from(repo_open::Message::Loaded(Box::new(result)))
-                            })
+                            }))
                         } else {
                             self.set_transient_status(status_message);
-                            Task::none()
+                            completion
                         }
                     }
                     Err(msg) => {
                         self.operation.pending_transient_status_after_reload = None;
                         self.operation.error = Some(msg);
-                        Task::none()
+                        completion
                     }
                 }
             }
@@ -77,9 +78,21 @@ impl App {
         self.operation.transient_status = None;
         self.operation.pending_transient_status_after_reload = None;
         self.operation.loading = true;
-        Task::perform(fetch::task::run(path, scope), move |result| {
-            Message::from(FetchMessage::Done { scope, result })
-        })
+        let id = self.operation_tracker.next_id();
+        let kind = OperationKind::ManualAction("fetch");
+        let label = match scope {
+            FetchScope::CurrentRemote => "Fetching…".to_string(),
+            FetchScope::AllRemotes => "Fetching all remotes…".to_string(),
+        };
+        let start = Task::done(Message::Operation(OperationEvent::Started {
+            id,
+            kind,
+            label,
+        }));
+        start.chain(Task::perform(
+            fetch::task::run(path, scope),
+            move |result| Message::from(FetchMessage::Done { scope, result }),
+        ))
     }
 
     pub(crate) fn start_auto_fetch(&mut self) -> Task<Message> {
@@ -123,6 +136,28 @@ impl App {
         let Some(id) = self
             .operation_tracker
             .current_id_for(&OperationKind::AutoFetch)
+        else {
+            return Task::none();
+        };
+        let event = match result {
+            Ok(()) => OperationEvent::Completed {
+                id,
+                result: OpResult::Success,
+                severity: OpSeverity::Recoverable,
+            },
+            Err(msg) => OperationEvent::Completed {
+                id,
+                result: OpResult::Failed(msg.clone()),
+                severity: OpSeverity::Recoverable,
+            },
+        };
+        Task::done(Message::Operation(event))
+    }
+
+    fn complete_manual_fetch(&mut self, result: &Result<(), String>) -> Task<Message> {
+        let Some(id) = self
+            .operation_tracker
+            .current_id_for(&OperationKind::ManualAction("fetch"))
         else {
             return Task::none();
         };

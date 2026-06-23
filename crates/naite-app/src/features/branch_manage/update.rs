@@ -109,7 +109,7 @@ impl App {
                             let reload_start =
                                 Task::done(Message::Operation(OperationEvent::Started {
                                     id: self.operation_tracker.next_id(),
-                                    kind: OperationKind::Custom("repo_open".to_string()),
+                                    kind: OperationKind::ManualAction("repo_open"),
                                     label: "Reloading repository…".to_string(),
                                 }));
                             completion.chain(reload_start.chain(Task::perform(

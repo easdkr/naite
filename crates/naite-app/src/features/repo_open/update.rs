@@ -28,7 +28,7 @@ impl App {
                 self.operation.loading = true;
                 let start = Task::done(Message::Operation(OperationEvent::Started {
                     id: self.operation_tracker.next_id(),
-                    kind: OperationKind::Custom("repo_open_open".to_string()),
+                    kind: OperationKind::ManualAction("repo_open_open"),
                     label: "Opening repository…".to_string(),
                 }));
                 start.chain(Task::perform(repo_open::task::load(path), |result| {
@@ -40,7 +40,7 @@ impl App {
                 self.operation.loading = true;
                 let start = Task::done(Message::Operation(OperationEvent::Started {
                     id: self.operation_tracker.next_id(),
-                    kind: OperationKind::Custom("repo_open_open".to_string()),
+                    kind: OperationKind::ManualAction("repo_open_open"),
                     label: format!("Opening {}…", path.display()),
                 }));
                 start.chain(Task::perform(repo_open::task::load(path), |result| {
@@ -94,7 +94,7 @@ impl App {
                     self.repo.operation_state = operation_state;
                     self.repo.status_detail = status_detail;
                     let completion = self.operation_tracker.emit_completed(
-                        &OperationKind::Custom("repo_open_open".to_string()),
+                        &OperationKind::ManualAction("repo_open_open"),
                         OpResult::Success,
                         OpSeverity::Recoverable,
                     );
@@ -120,9 +120,7 @@ impl App {
                                 let start =
                                     Task::done(Message::Operation(OperationEvent::Started {
                                         id,
-                                        kind: OperationKind::Custom(
-                                            "repo_open_force_push".to_string(),
-                                        ),
+                                        kind: OperationKind::ManualAction("repo_open_force_push"),
                                         label: "Preparing force push prompt…".to_string(),
                                     }));
                                 let complete =
@@ -205,7 +203,7 @@ impl App {
                     self.release_prep.auto_running = false;
                     self.release_prep.auto_next_action = None;
                     let completion = self.operation_tracker.emit_completed(
-                        &OperationKind::Custom("repo_open_open".to_string()),
+                        &OperationKind::ManualAction("repo_open_open"),
                         OpResult::Failed(msg.clone()),
                         OpSeverity::Recoverable,
                     );
@@ -250,7 +248,7 @@ impl App {
                         self.operation.error = Some(msg.clone());
                         let start = Task::done(Message::Operation(OperationEvent::Started {
                             id,
-                            kind: OperationKind::Custom("repo_open_paginate".to_string()),
+                            kind: OperationKind::ManualAction("repo_open_paginate"),
                             label: "Loading more commits…".to_string(),
                         }));
                         let complete = Task::done(Message::Operation(OperationEvent::Completed {
@@ -382,7 +380,7 @@ impl App {
                     self.operation.error = Some(msg.clone());
                     let start = Task::done(Message::Operation(OperationEvent::Started {
                         id,
-                        kind: OperationKind::Custom("repo_open_clone".to_string()),
+                        kind: OperationKind::ManualAction("repo_open_clone"),
                         label: "Validating clone URL…".to_string(),
                     }));
                     let complete = Task::done(Message::Operation(OperationEvent::Completed {
@@ -405,7 +403,7 @@ impl App {
                 let url = self.manager.clone_url.clone();
                 let start = Task::done(Message::Operation(OperationEvent::Started {
                     id: self.operation_tracker.next_id(),
-                    kind: OperationKind::Custom("repo_open_clone".to_string()),
+                    kind: OperationKind::ManualAction("repo_open_clone"),
                     label: format!("Cloning {url}…"),
                 }));
                 start.chain(Task::perform(
@@ -419,7 +417,7 @@ impl App {
                 self.operation.loading = true;
                 let start = Task::done(Message::Operation(OperationEvent::Started {
                     id: self.operation_tracker.next_id(),
-                    kind: OperationKind::Custom("repo_open_load".to_string()),
+                    kind: OperationKind::ManualAction("repo_open_load"),
                     label: "Loading cloned repository…".to_string(),
                 }));
                 start.chain(Task::perform(repo_open::task::load(path), |result| {
@@ -433,7 +431,7 @@ impl App {
                 self.operation.error = Some(msg.clone());
                 let start = Task::done(Message::Operation(OperationEvent::Started {
                     id,
-                    kind: OperationKind::Custom("repo_open_clone".to_string()),
+                    kind: OperationKind::ManualAction("repo_open_clone"),
                     label: "Cloning repository…".to_string(),
                 }));
                 let complete = Task::done(Message::Operation(OperationEvent::Completed {
@@ -456,7 +454,7 @@ impl App {
                 self.operation.loading = true;
                 let start = Task::done(Message::Operation(OperationEvent::Started {
                     id: self.operation_tracker.next_id(),
-                    kind: OperationKind::Custom("repo_open_init".to_string()),
+                    kind: OperationKind::ManualAction("repo_open_init"),
                     label: format!("Initializing repository at {}…", path.display()),
                 }));
                 start.chain(Task::perform(repo_open::task::init(path), |result| {
@@ -467,7 +465,7 @@ impl App {
                 self.operation.loading = true;
                 let start = Task::done(Message::Operation(OperationEvent::Started {
                     id: self.operation_tracker.next_id(),
-                    kind: OperationKind::Custom("repo_open_load".to_string()),
+                    kind: OperationKind::ManualAction("repo_open_load"),
                     label: "Loading new repository…".to_string(),
                 }));
                 start.chain(Task::perform(repo_open::task::load(path), |result| {
@@ -480,7 +478,7 @@ impl App {
                 self.operation.error = Some(msg.clone());
                 let start = Task::done(Message::Operation(OperationEvent::Started {
                     id,
-                    kind: OperationKind::Custom("repo_open_init".to_string()),
+                    kind: OperationKind::ManualAction("repo_open_init"),
                     label: "Initializing repository…".to_string(),
                 }));
                 let complete = Task::done(Message::Operation(OperationEvent::Completed {

@@ -27,7 +27,7 @@ impl App {
                 self.operation.error = Some(msg.clone());
                 let start = Task::done(Message::Operation(OperationEvent::Started {
                     id,
-                    kind: OperationKind::Custom("catalog_load".to_string()),
+                    kind: OperationKind::ManualAction("catalog_load"),
                     label: "Loading catalog…".to_string(),
                 }));
                 let complete = Task::done(Message::Operation(OperationEvent::Completed {
@@ -43,7 +43,7 @@ impl App {
                 self.operation.error = Some(msg.clone());
                 let start = Task::done(Message::Operation(OperationEvent::Started {
                     id,
-                    kind: OperationKind::Custom("catalog_save".to_string()),
+                    kind: OperationKind::ManualAction("catalog_save"),
                     label: "Saving catalog…".to_string(),
                 }));
                 let complete = Task::done(Message::Operation(OperationEvent::Completed {

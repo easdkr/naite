@@ -401,7 +401,7 @@ impl App {
             self.operation.error = Some(msg.clone());
             let start = Task::done(Message::Operation(OperationEvent::Started {
                 id,
-                kind: OperationKind::Custom("terminal_open".to_string()),
+                kind: OperationKind::ManualAction("terminal_open"),
                 label: "Opening terminal…".to_string(),
             }));
             let complete = Task::done(Message::Operation(OperationEvent::Completed {
