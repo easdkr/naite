@@ -91,6 +91,7 @@ impl Repository {
         &self,
         path: impl AsRef<Path>,
         delete_branch: bool,
+        force: bool,
     ) -> Result<(), Error> {
         let path = validate_worktree_path(path.as_ref())?;
         let branch = if delete_branch {
@@ -102,14 +103,26 @@ impl Repository {
         };
 
         let cwd = self.workdir().unwrap_or(self.path());
-        let _ = command::run_git(
-            cwd,
-            [
-                OsStr::new("worktree"),
-                OsStr::new("remove"),
-                path.as_os_str(),
-            ],
-        )?;
+        if force {
+            let _ = command::run_git(
+                cwd,
+                [
+                    OsStr::new("worktree"),
+                    OsStr::new("remove"),
+                    OsStr::new("--force"),
+                    path.as_os_str(),
+                ],
+            )?;
+        } else {
+            let _ = command::run_git(
+                cwd,
+                [
+                    OsStr::new("worktree"),
+                    OsStr::new("remove"),
+                    path.as_os_str(),
+                ],
+            )?;
+        }
 
         if let Some(branch) = branch {
             if self.head_branch().as_deref() != Some(branch.as_str()) {
@@ -335,13 +348,43 @@ mod tests {
         }));
 
         repo.unlock_worktree(&sibling).unwrap();
-        repo.remove_worktree(&sibling, true).unwrap();
+        repo.remove_worktree(&sibling, true, false).unwrap();
 
         let refs = Repository::open(&repo_dir.path).unwrap().refs().unwrap();
         assert!(!refs
             .local
             .iter()
             .any(|branch| branch.short_name == "feature/linked"));
+        assert!(!sibling.exists());
+    }
+
+    #[test]
+    fn remove_worktree_force_clears_dirty_changes() {
+        let repo_dir = TempRepo::init_with_commit("worktree-force");
+        repo_dir.git(&["branch", "-M", "main"]);
+        let sibling = repo_dir.path.with_file_name(format!(
+            "{}-linked",
+            repo_dir.path.file_name().unwrap().to_string_lossy()
+        ));
+
+        let repo = Repository::open(&repo_dir.path).unwrap();
+        repo.add_worktree(&WorktreeAdd {
+            path: sibling.clone(),
+            start_point: "main".into(),
+            new_branch: Some("feature/dirty".into()),
+        })
+        .unwrap();
+
+        // Make the linked worktree dirty so plain `git worktree remove` refuses.
+        std::fs::write(sibling.join("dirty.txt"), "unsaved\n").unwrap();
+        let sibling = sibling.canonicalize().unwrap();
+
+        // Plain remove must fail — this is the bug the force fallback addresses.
+        let repo = Repository::open(&repo_dir.path).unwrap();
+        assert!(repo.remove_worktree(&sibling, false, false).is_err());
+
+        // Force remove succeeds even with uncommitted changes.
+        repo.remove_worktree(&sibling, false, true).unwrap();
         assert!(!sibling.exists());
     }
 }

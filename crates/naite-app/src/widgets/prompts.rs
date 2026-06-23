@@ -247,6 +247,19 @@ pub fn branch_delete_prompt<'a>(
             format!("Remove linked worktrees: no ({linked_count})")
         }
     });
+    let any_dirty_linked = prompt
+        .linked_worktrees
+        .iter()
+        .any(|worktree| worktree.dirty);
+    let force_linked_worktree_toggle = if prompt.delete_linked_worktrees && any_dirty_linked {
+        Some(if prompt.force_linked_worktrees {
+            "Force linked worktrees: yes".to_string()
+        } else {
+            "Force linked worktrees: no".to_string()
+        })
+    } else {
+        None
+    };
     let can_delete = !loading && (linked_count == 0 || prompt.delete_linked_worktrees);
 
     column![
@@ -269,6 +282,10 @@ pub fn branch_delete_prompt<'a>(
             maybe_linked_worktree_toggle_button(
                 linked_worktree_toggle,
                 prompt.delete_linked_worktrees
+            ),
+            maybe_force_linked_worktree_toggle_button(
+                force_linked_worktree_toggle,
+                prompt.force_linked_worktrees
             ),
             Space::with_width(Length::Fill),
             button(text("Cancel").size(theme::FS_SM))
@@ -312,11 +329,28 @@ fn maybe_linked_worktree_toggle_button<'a>(
     checked: bool,
 ) -> Element<'a, Message> {
     if let Some(label) = label {
-        button(text(label).size(theme::FS_SM))
+        button(text(label).size(theme::FS_SM).wrapping(Wrapping::None))
             .padding(Padding::from([5, 10]))
             .style(styles::subtle_button)
             .on_press(Message::from(
                 branch_manage::Message::DeleteLinkedWorktreesToggled(!checked),
+            ))
+            .into()
+    } else {
+        Space::with_width(Length::Shrink).into()
+    }
+}
+
+fn maybe_force_linked_worktree_toggle_button<'a>(
+    label: Option<String>,
+    checked: bool,
+) -> Element<'a, Message> {
+    if let Some(label) = label {
+        button(text(label).size(theme::FS_SM).wrapping(Wrapping::None))
+            .padding(Padding::from([5, 10]))
+            .style(styles::subtle_button)
+            .on_press(Message::from(
+                branch_manage::Message::DeleteForceLinkedWorktreesToggled(!checked),
             ))
             .into()
     } else {

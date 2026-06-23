@@ -7063,6 +7063,7 @@ fn confirmed_branch_delete_starts_operation() {
                 delete_matching_local_branches: false,
                 matching_local_branches: Vec::new(),
                 delete_linked_worktrees: false,
+                force_linked_worktrees: false,
                 linked_worktrees: Vec::new(),
             }),
             ..Default::default()
@@ -7094,6 +7095,7 @@ fn branch_delete_success_closes_prompt_context_and_starts_reload() {
                 delete_matching_local_branches: false,
                 matching_local_branches: Vec::new(),
                 delete_linked_worktrees: false,
+                force_linked_worktrees: false,
                 linked_worktrees: Vec::new(),
             }),
             ..Default::default()
@@ -7110,6 +7112,7 @@ fn branch_delete_success_closes_prompt_context_and_starts_reload() {
             target: BranchDeleteTarget::LocalBranch(target),
             delete_matching_local_branches: false,
             delete_linked_worktrees: false,
+            force_linked_worktrees: false,
             linked_worktrees: Vec::new(),
         },
         result: Ok(()),
@@ -7153,6 +7156,7 @@ fn remote_branch_delete_success_closes_prompt_context_and_starts_reload() {
                 delete_matching_local_branches: true,
                 matching_local_branches: vec!["claude/a".into()],
                 delete_linked_worktrees: false,
+                force_linked_worktrees: false,
                 linked_worktrees: Vec::new(),
             }),
             ..Default::default()
@@ -7169,6 +7173,7 @@ fn remote_branch_delete_success_closes_prompt_context_and_starts_reload() {
             target,
             delete_matching_local_branches: true,
             delete_linked_worktrees: false,
+            force_linked_worktrees: false,
             linked_worktrees: Vec::new(),
         },
         result: Ok(()),
@@ -7194,6 +7199,7 @@ fn escape_closes_branch_delete_prompt_and_rename_form() {
                 delete_matching_local_branches: false,
                 matching_local_branches: Vec::new(),
                 delete_linked_worktrees: false,
+                force_linked_worktrees: false,
                 linked_worktrees: Vec::new(),
             }),
             ..Default::default()

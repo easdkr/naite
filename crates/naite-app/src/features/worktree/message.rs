@@ -15,6 +15,7 @@ pub enum Message {
     CreateDone(Result<PathBuf, String>),
     RemoveRequested(WorktreeSummary),
     RemoveDeleteBranchToggled(bool),
+    RemoveForceToggled(bool),
     RemoveCancelled,
     RemoveConfirmed,
     RemoveDone(Result<(), String>),
