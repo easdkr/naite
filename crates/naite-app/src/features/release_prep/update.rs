@@ -47,7 +47,7 @@ impl App {
                 if self.release_prep.auto_running {
                     return Task::none();
                 }
-                // Keep script edits made in the actions modal across sessions.
+                let completion = self.complete_release_prep_op(&Ok(()));
                 let save = if self.release_prep.phase == ReleasePrepPhase::Actions {
                     self.persist_active_release_profile_if_changed()
                 } else {
@@ -58,17 +58,23 @@ impl App {
                 self.release_prep.auto_next_action = None;
                 self.release_prep.active_action = None;
                 self.release_prep.completed_actions.clear();
-                save
+                Task::batch([completion, save])
             }
             ReleasePrepMessage::ProfileSubmitted => self.submit_release_prep_profile(),
             ReleasePrepMessage::Prepared(result) => self.finish_release_prepare(*result),
             ReleasePrepMessage::PrepareStepStarted(step) => {
+                if self.release_prep.phase == ReleasePrepPhase::Idle {
+                    return Task::none();
+                }
                 self.release_prep.preparing_step = Some(step);
                 let progress = Task::done(self.step_progressed_event(step));
                 let step_task = self.dispatch_prepare_step(step);
                 Task::batch([progress, step_task])
             }
             ReleasePrepMessage::PrepareStepDone { step, result } => {
+                if self.release_prep.phase == ReleasePrepPhase::Idle {
+                    return Task::none();
+                }
                 self.release_prep.completed_preparing_steps.push(step);
                 self.release_prep.preparing_step = None;
                 match *result {
