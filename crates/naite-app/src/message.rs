@@ -13,7 +13,7 @@ use crate::features::{
     repo_open, reset, revert, stage, stash, tag, terminal, workspace, worktree,
 };
 use crate::state::{
-    ContextMenuKind, DensityPreference, DiffViewMode, SidebarSection, ThemePreference,
+    ContextMenuKind, DensityPreference, DiffViewMode, OperationId, SidebarSection, ThemePreference,
 };
 
 #[derive(Debug, Clone)]
@@ -97,12 +97,31 @@ pub enum Message {
     AutoFetchTick,
     TransientStatusTick,
     ReleasePrepTick,
+    /// Manual dismissal of a failure toast from the bottom-right layer.
+    /// `index` targets the toast's position in `App::toasts`; out-of-bounds
+    /// indices are silently ignored so the UI cannot panic on stale events.
+    ToastDismissed {
+        index: usize,
+    },
     CopyText(String),
     ClearError,
+    Operation(OperationEvent),
     AvatarFetched {
         url: String,
         bytes: Result<Vec<u8>, String>,
     },
+}
+
+/// Lifecycle events emitted by feature operations. Dispatched into
+/// `OperationTracker` from the global `update` arm. Only the dismiss
+/// variant is currently routed (Wave 3 Task 13); feature migration
+/// waves (Tasks 18/22) will add Started/Completed/StepUpdated/etc.
+#[derive(Debug, Clone)]
+pub enum OperationEvent {
+    /// User dismissed a completed (Recoverable-failed) operation from the
+    /// bottom status bar. Carries the tracker's monotonic id so the
+    /// matching history entry can be removed.
+    Dismissed { id: OperationId },
 }
 
 impl From<branch_create::Message> for Message {

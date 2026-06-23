@@ -324,8 +324,30 @@ impl App {
                 {
                     self.operation.transient_status = None;
                 }
+                // Reuse this 250ms tick for toast TTL bookkeeping so the
+                // subscription list stays small. Failure toasts are filtered
+                // out by `is_expired` because they never auto-dismiss.
+                if !self.toasts.is_empty() {
+                    let now = Instant::now();
+                    self.toasts.retain(|toast| !toast.is_expired(now));
+                }
                 Task::none()
             }
+            Message::ToastDismissed { index } => {
+                if index < self.toasts.len() {
+                    self.toasts.remove(index);
+                }
+                Task::none()
+            }
+            Message::Operation(event) => match event {
+                crate::message::OperationEvent::Dismissed { id } => {
+                    // Errors from the tracker (stale ids, double-dismiss)
+                    // are intentionally swallowed: the UI event is the
+                    // source of truth and a stale dismiss is harmless.
+                    let _ = self.operation_tracker.dismiss(id);
+                    Task::none()
+                }
+            },
             Message::ReleasePrepTick => {
                 if self.release_prep.phase == crate::state::ReleasePrepPhase::Idle {
                     return Task::none();

@@ -56,6 +56,43 @@ pub fn status_bar_surface(_: &Theme) -> container::Style {
     }
 }
 
+/// Bottom status bar surface — the strip docked against the window
+/// bottom that shows recently-completed operations + dismissable
+/// Recoverable errors. Mirrors the top bar's SURFACE_TERMINAL tone so
+/// both status strips read as the same surface class (consistent
+/// chrome), but uses a hairline BOTTOM border instead of top to anchor
+/// the strip visually to the window edge instead of to the content
+/// above it.
+pub fn bottom_status_bar_surface(_: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(color::SURFACE_TERMINAL)),
+        border: Border {
+            color: color::with_alpha(color::BORDER, 0.55),
+            width: 1.0,
+            radius: iced::border::Radius::default().bottom(theme::R_SM),
+        },
+        ..Default::default()
+    }
+}
+
+/// Danger-tinted pill used for individual Recoverable error entries on
+/// the bottom status bar. Reads as "this is a problem the user should
+/// look at, but it is not blocking" — sits between the quiet
+/// SURFACE_TERMINAL strip and the bold `error_card` used for Fatal
+/// errors. Pill radius matches the chrome of other chips in the app
+/// (commit status badges, command palette chips).
+pub fn error_pill(_: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(color::with_alpha(color::DANGER, 0.14))),
+        border: Border {
+            color: color::with_alpha(color::DANGER, 0.45),
+            width: 1.0,
+            radius: theme::R_PILL.into(),
+        },
+        ..Default::default()
+    }
+}
+
 /// Quiet pill used inside floating panel headers to surface secondary
 /// info (e.g. the running shell's reported title) without competing with
 /// the panel chrome.

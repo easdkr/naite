@@ -33,7 +33,11 @@ impl App {
         ]);
         let mut subscriptions = vec![events];
         subscriptions.push(terminal::runtime::subscription().map(Message::from));
-        if self.operation.transient_status.is_some() {
+        // The 250ms tick serves both the transient status bar and the
+        // bottom-right toast layer's TTL bookkeeping. Firing it while
+        // either is non-empty keeps a single subscription instead of two
+        // independent 250ms clocks.
+        if self.operation.transient_status.is_some() || !self.toasts.is_empty() {
             subscriptions
                 .push(time::every(TRANSIENT_STATUS_TICK).map(|_| Message::TransientStatusTick));
         }
