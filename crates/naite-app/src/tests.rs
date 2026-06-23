@@ -8867,3 +8867,314 @@ fn commit_action_keys_are_suppressed_when_text_input_captured() {
         );
     }
 }
+
+// =====================================================================
+// release_prep_prepare_baseline
+//
+// Regression baselines that lock down the CURRENT (pre-refactor) behavior
+// of `release_prep::task::prepare()`. Task 21 (Wave 5) will split the
+// single spawn_blocking closure into 7 per-step async fns; these tests
+// must keep passing against that split implementation so the refactor
+// stays behavior-preserving.
+//
+// All tests construct a real local git repository (mirroring the helper
+// pattern from `crates/naite-core/src/test_helpers.rs`) and call
+// `release_prep::task::prepare` directly. No network or external
+// binaries are required beyond the `git` command on PATH, which the rest
+// of the workspace tests already assume.
+// =====================================================================
+mod release_prep_prepare_baseline {
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use crate::features::release_prep;
+
+    /// Holds the temporary directories backing a single baseline test so
+    /// they can be cleaned up deterministically when the test ends.
+    struct ReleasePrepTestRepo {
+        remote: PathBuf,
+        parent: PathBuf,
+    }
+
+    impl ReleasePrepTestRepo {
+        fn local(&self) -> PathBuf {
+            self.parent.join("local")
+        }
+    }
+
+    impl Drop for ReleasePrepTestRepo {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.remote);
+            let _ = std::fs::remove_dir_all(&self.parent);
+        }
+    }
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "naite-app-release-prep-baseline-{tag}-{nanos}-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    fn run_git(cwd: &Path, args: &[&str]) -> String {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .output()
+            .unwrap_or_else(|err| panic!("failed to spawn git {args:?}: {err}"));
+        assert!(
+            output.status.success(),
+            "git {args:?} failed in {}: {}",
+            cwd.display(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).to_string()
+    }
+
+    /// Creates a self-contained repository layout for release_prep tests:
+    ///
+    /// * a bare `origin` remote,
+    /// * a source repo with `main` (initial commit) and `staging` (one
+    ///   extra commit "staging") both pushed,
+    /// * a local clone on the `staging` branch (matching `origin/staging`),
+    ///   with `user.name` / `user.email` configured so the prepare pipeline
+    ///   can resolve `configured_user_email`.
+    ///
+    /// The returned `ReleasePrepTestRepo` cleans up both directories on
+    /// drop.
+    fn setup_synced_repo(tag: &str) -> ReleasePrepTestRepo {
+        let remote = temp_dir(&format!("{tag}-remote"));
+        run_git(&remote, &["init", "--bare"]);
+        // Bare `init` defaults to the host's initial branch name; pin HEAD
+        // so `clone --branch main` works on hosts that default to `master`.
+        run_git(&remote, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+
+        let source = temp_dir(&format!("{tag}-source"));
+        run_git(&source, &["init", "-b", "main"]);
+        run_git(&source, &["config", "user.name", "naite test"]);
+        run_git(&source, &["config", "user.email", "naite@example.com"]);
+        std::fs::write(source.join("file.txt"), "initial\n").unwrap();
+        run_git(&source, &["add", "file.txt"]);
+        run_git(&source, &["commit", "-m", "initial"]);
+        run_git(
+            &source,
+            &["remote", "add", "origin", remote.to_str().unwrap()],
+        );
+        run_git(&source, &["push", "-u", "origin", "main"]);
+        run_git(&source, &["checkout", "-b", "staging"]);
+        std::fs::write(source.join("staging.txt"), "staging\n").unwrap();
+        run_git(&source, &["add", "staging.txt"]);
+        run_git(&source, &["commit", "-m", "staging"]);
+        run_git(&source, &["push", "-u", "origin", "staging"]);
+
+        let parent = temp_dir(&format!("{tag}-parent"));
+        let local = parent.join("local");
+        let clone = std::process::Command::new("git")
+            .args([
+                "clone",
+                "--branch",
+                "staging",
+                remote.to_str().unwrap(),
+                local.to_str().unwrap(),
+            ])
+            .output()
+            .expect("git clone");
+        assert!(
+            clone.status.success(),
+            "git clone failed: {}",
+            String::from_utf8_lossy(&clone.stderr)
+        );
+        run_git(&local, &["config", "user.name", "naite test"]);
+        run_git(&local, &["config", "user.email", "naite@example.com"]);
+        // Touch both branches so remote tracking refs are populated locally.
+        run_git(&local, &["checkout", "main"]);
+        run_git(&local, &["checkout", "staging"]);
+
+        ReleasePrepTestRepo { remote, parent }
+    }
+
+    fn baseline_profile() -> naite_core::ReleaseProfile {
+        naite_core::ReleaseProfile {
+            remote: "origin".into(),
+            source_branch: "staging".into(),
+            target_branch: "main".into(),
+            validation_script: None,
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn release_prep_prepare_baseline_success() {
+        let repo = setup_synced_repo("success");
+        let local = repo.local();
+
+        let outcome = release_prep::task::prepare(local.clone(), baseline_profile(), true)
+            .await
+            .expect("prepare() should succeed against a synced, clean repo");
+
+        assert_eq!(outcome.sync_check.profile.remote, "origin");
+        assert_eq!(outcome.sync_check.profile.source_branch, "staging");
+        assert_eq!(outcome.sync_check.profile.target_branch, "main");
+        assert!(outcome.sync_check.is_ready());
+        assert!(outcome.sync_check.source.is_ready());
+        assert!(outcome.sync_check.target.is_ready());
+        assert_eq!(outcome.sync_check.source.local_ref, "refs/heads/staging");
+        assert_eq!(
+            outcome.sync_check.source.remote_ref,
+            "refs/remotes/origin/staging"
+        );
+        assert_eq!(outcome.sync_check.target.local_ref, "refs/heads/main");
+        assert_eq!(
+            outcome.sync_check.target.remote_ref,
+            "refs/remotes/origin/main"
+        );
+
+        let backup = outcome
+            .backup_branch
+            .as_deref()
+            .expect("backup_before_rebase=true should produce a backup branch");
+        assert!(
+            backup.starts_with("naite/release-prep/staging-"),
+            "unexpected backup branch name: {backup}"
+        );
+
+        assert_eq!(outcome.current_branch.short_name, "staging");
+        assert!(outcome.current_branch.is_head);
+        assert_eq!(outcome.current_branch.full_name, "refs/heads/staging");
+        assert_eq!(outcome.target.short_name, "main");
+        assert!(!outcome.target.is_head);
+        assert_eq!(outcome.target.full_name, "refs/heads/main");
+
+        assert_eq!(
+            outcome.current_author_email.as_deref(),
+            Some("naite@example.com")
+        );
+
+        assert_eq!(outcome.plan.len(), 1);
+        let row = &outcome.plan[0];
+        assert_eq!(row.action, naite_core::RebaseAction::Pick);
+        assert_eq!(row.commit.summary, "staging");
+        assert_eq!(row.commit.author_email, "naite@example.com");
+        assert!(row.author_avatar_url.is_none());
+
+        let snapshot = &outcome.repo_snapshot;
+        assert_eq!(snapshot.6.as_deref(), Some("staging"));
+        assert!(!snapshot.7.is_dirty(), "snapshot worktree should be clean");
+        assert!(!snapshot.9.is_busy(), "snapshot should report no busy op");
+        let subjects: Vec<String> = snapshot
+            .1
+            .iter()
+            .map(|commit| commit.summary.clone())
+            .collect();
+        assert!(subjects.contains(&"initial".to_string()));
+        assert!(subjects.contains(&"staging".to_string()));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn release_prep_prepare_baseline_dirty_worktree() {
+        let repo = setup_synced_repo("dirty");
+        let local = repo.local();
+        // Modify a tracked file without staging or committing to make the
+        // worktree dirty.
+        std::fs::write(local.join("file.txt"), "modified but not staged\n").unwrap();
+
+        let err = release_prep::task::prepare(local.clone(), baseline_profile(), false)
+            .await
+            .expect_err("prepare() must refuse a dirty worktree before doing IO");
+        assert!(
+            err.contains("worktree has local changes"),
+            "dirty-worktree error should mention local changes; got: {err}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn release_prep_prepare_baseline_busy_operation() {
+        let repo = setup_synced_repo("busy");
+        let local = repo.local();
+        // Simulate an in-progress merge by dropping a MERGE_HEAD marker
+        // into the .git directory; operation_state().is_busy() then
+        // reports true.
+        let git_dir = run_git(&local, &["rev-parse", "--absolute-git-dir"])
+            .trim()
+            .to_string();
+        std::fs::write(format!("{git_dir}/MERGE_HEAD"), "deadbeef\n").unwrap();
+
+        let err = release_prep::task::prepare(local.clone(), baseline_profile(), false)
+            .await
+            .expect_err("prepare() must refuse when another git op is in progress");
+        assert!(
+            err.contains("another Git operation is already in progress"),
+            "busy-operation error should mention another git operation; got: {err}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn release_prep_prepare_baseline_sync_failure() {
+        // Build a repo where `main` matches `origin/main` but `staging`
+        // exists only locally (no remote tracking ref). The prepare
+        // pipeline's force-sync step therefore fails when it tries to
+        // verify the missing remote ref via `git show-ref --verify`.
+        let remote = temp_dir("sync-failure-remote");
+        run_git(&remote, &["init", "--bare"]);
+        run_git(&remote, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+
+        let source = temp_dir("sync-failure-source");
+        run_git(&source, &["init", "-b", "main"]);
+        run_git(&source, &["config", "user.name", "naite test"]);
+        run_git(&source, &["config", "user.email", "naite@example.com"]);
+        std::fs::write(source.join("file.txt"), "initial\n").unwrap();
+        run_git(&source, &["add", "file.txt"]);
+        run_git(&source, &["commit", "-m", "initial"]);
+        run_git(
+            &source,
+            &["remote", "add", "origin", remote.to_str().unwrap()],
+        );
+        // Only push main; staging stays local-only on the remote side.
+        run_git(&source, &["push", "-u", "origin", "main"]);
+
+        let parent = temp_dir("sync-failure-parent");
+        let local = parent.join("local");
+        let clone = std::process::Command::new("git")
+            .args(["clone", remote.to_str().unwrap(), local.to_str().unwrap()])
+            .output()
+            .expect("git clone");
+        assert!(
+            clone.status.success(),
+            "git clone failed: {}",
+            String::from_utf8_lossy(&clone.stderr)
+        );
+        run_git(&local, &["config", "user.name", "naite test"]);
+        run_git(&local, &["config", "user.email", "naite@example.com"]);
+        // Create the local-only staging branch with a divergent commit so
+        // sync_release_branches_with_remote must try to force-sync it.
+        run_git(&local, &["checkout", "-b", "staging"]);
+        std::fs::write(local.join("staging.txt"), "staging only\n").unwrap();
+        run_git(&local, &["add", "staging.txt"]);
+        run_git(&local, &["commit", "-m", "staging"]);
+        // Switch back to main so HEAD is not the diverging staging ref
+        // (prepare requires HEAD to be a non-source branch at step B5).
+        run_git(&local, &["checkout", "main"]);
+
+        let result = release_prep::task::prepare(local.clone(), baseline_profile(), false).await;
+
+        let _ = std::fs::remove_dir_all(&remote);
+        let _ = std::fs::remove_dir_all(&parent);
+
+        let err =
+            result.expect_err("prepare() must fail when force-sync cannot reach the remote ref");
+        // The exact stderr wording varies by git version, so assert on a
+        // stable substring of the failing git command instead of the full
+        // message.
+        assert!(
+            err.contains("show-ref")
+                || err.contains("refs/remotes/origin/staging")
+                || err.contains("Release branches"),
+            "sync failure error should reference the missing remote ref or the formatted sync message; got: {err}"
+        );
+    }
+}
