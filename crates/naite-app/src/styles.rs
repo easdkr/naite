@@ -38,6 +38,24 @@ pub fn floating_panel(_: &Theme) -> container::Style {
     }
 }
 
+/// Top status bar surface — the strip below the toolbar that surfaces
+/// in-flight operations. Uses SURFACE_TERMINAL (the dedicated "between
+/// SURFACE_1 and SURFACE_2" tone) so it reads as its own surface class
+/// distinct from the SURFACE_1 toolbar above and the BG commit list
+/// below. A hairline top border (BORDER at half alpha) anchors the
+/// strip visually to the toolbar without adding weight.
+pub fn status_bar_surface(_: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(color::SURFACE_TERMINAL)),
+        border: Border {
+            color: color::with_alpha(color::BORDER, 0.55),
+            width: 1.0,
+            radius: iced::border::Radius::default().top(theme::R_SM),
+        },
+        ..Default::default()
+    }
+}
+
 /// Quiet pill used inside floating panel headers to surface secondary
 /// info (e.g. the running shell's reported title) without competing with
 /// the panel chrome.
@@ -443,6 +461,60 @@ pub fn ghost_row(_: &Theme) -> container::Style {
 pub fn ghost_action_chip(_: &Theme) -> container::Style {
     container::Style {
         background: Some(Background::Color(color::with_alpha(color::SURFACE_1, 0.85))),
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: theme::R_SM.into(),
+        },
+        ..Default::default()
+    }
+}
+
+// ---------- toast pills ----------
+
+/// Success-tinted surface for transient success notifications rendered in
+/// the bottom-right toast layer. Mirrors the alpha+border treatment of
+/// `error_card` / `warning_card` so all three severity cards read as the
+/// same design language.
+pub fn toast_pill_success(_: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(color::with_alpha(color::SUCCESS, 0.12))),
+        border: Border {
+            color: color::with_alpha(color::SUCCESS, 0.35),
+            width: 1.0,
+            radius: theme::R_MD.into(),
+        },
+        ..Default::default()
+    }
+}
+
+/// Failure-tinted surface for transient failure notifications rendered in
+/// the bottom-right toast layer. Reuses the same surface recipe as
+/// `error_card` so on-screen errors and toast errors share visual weight.
+pub fn toast_pill_failure(_: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(color::with_alpha(color::DANGER, 0.12))),
+        border: Border {
+            color: color::with_alpha(color::DANGER, 0.35),
+            width: 1.0,
+            radius: theme::R_MD.into(),
+        },
+        ..Default::default()
+    }
+}
+
+/// Compact ghost button used for the toast failure pill's "닫기" affordance.
+/// Stays transparent at rest so it doesn't compete with the surrounding
+/// pill chrome; only lifts to a faint DANGER tint on hover.
+pub fn toast_dismiss_button(_: &Theme, status: button::Status) -> button::Style {
+    let bg = match status {
+        button::Status::Hovered => color::with_alpha(color::DANGER, 0.18),
+        button::Status::Pressed => color::with_alpha(color::DANGER, 0.28),
+        _ => Color::TRANSPARENT,
+    };
+    button::Style {
+        background: Some(Background::Color(bg)),
+        text_color: color::TEXT_MUTED,
         border: Border {
             color: Color::TRANSPARENT,
             width: 0.0,
