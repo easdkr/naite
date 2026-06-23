@@ -644,7 +644,7 @@ fn prompt_action_label<'a>(label: &'a str) -> Element<'a, Message> {
 
 fn prompt_action_label_width(label: &str) -> f32 {
     let text_width = label.chars().count() as f32 * 7.0;
-    (text_width + 2.0).clamp(46.0, 92.0)
+    (text_width + 2.0).clamp(46.0, 140.0)
 }
 
 pub fn tag_delete_prompt<'a>(prompt: &'a TagDeletePrompt, loading: bool) -> Element<'a, Message> {
@@ -734,39 +734,49 @@ pub fn worktree_remove_prompt<'a>(
     } else {
         "Delete branch: no"
     };
+    let toggle_delete_branch = Message::from(worktree::Message::RemoveDeleteBranchToggled(
+        !prompt.delete_branch,
+    ));
 
     container(
-        row![
+        column![
             column![
                 text(format!("Remove worktree {}", prompt.target.path.display()))
                     .size(theme::FS_BASE)
                     .font(theme::font_semibold())
+                    .width(Length::Fill)
+                    .wrapping(Wrapping::WordOrGlyph)
                     .color(color::TEXT),
                 text(format!("Branch: {branch}. Runs git worktree remove."))
                     .size(theme::FS_SM)
                     .font(theme::font_regular())
+                    .width(Length::Fill)
+                    .wrapping(Wrapping::WordOrGlyph)
                     .color(color::TEXT_MUTED),
             ]
+            .width(Length::Fill)
             .spacing(2),
-            Space::with_width(Length::Fill),
-            button(text(delete_label).size(theme::FS_SM))
-                .padding(Padding::from([5, 10]))
-                .style(styles::subtle_button)
-                .on_press(Message::from(worktree::Message::RemoveDeleteBranchToggled(
-                    !prompt.delete_branch
-                ))),
-            button(text("Cancel").size(theme::FS_SM))
-                .padding(Padding::from([5, 10]))
-                .style(styles::subtle_button)
-                .on_press(Message::from(worktree::Message::RemoveCancelled)),
-            button(text("Remove").size(theme::FS_SM))
-                .padding(Padding::from([5, 10]))
-                .style(styles::danger_button)
-                .on_press_maybe(
-                    (!loading).then_some(Message::from(worktree::Message::RemoveConfirmed))
+            row![
+                Space::with_width(Length::Fill),
+                prompt_action_button(
+                    delete_label,
+                    styles::subtle_button,
+                    Some(toggle_delete_branch),
                 ),
+                prompt_action_button(
+                    "Cancel",
+                    styles::subtle_button,
+                    Some(Message::from(worktree::Message::RemoveCancelled)),
+                ),
+                prompt_action_button(
+                    "Remove",
+                    styles::danger_button,
+                    (!loading).then_some(Message::from(worktree::Message::RemoveConfirmed)),
+                ),
+            ]
+            .align_y(Alignment::Center)
+            .spacing(theme::SP_MD),
         ]
-        .align_y(Alignment::Center)
         .spacing(theme::SP_MD),
     )
     .padding(theme::SP_MD)
