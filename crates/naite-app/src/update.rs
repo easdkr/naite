@@ -13,13 +13,13 @@ use crate::features::repo_open;
 use crate::message::{KeyAction, Message, TabsMessage};
 use crate::persistence::{self, OpenTabsSnapshot};
 use crate::state::{
-    BranchCreateState, CommitFormState, FileInsightState, HistoryRewordState, ReleasePrepPhase,
-    RepositoryState, SidebarClickState, StashBranchState, StashCreateState, TagCreateState,
-    TransientStatus,
+    BranchCreateState, CommitFormState, FileInsightState, HistoryRewordState, OpResult, OpSeverity,
+    ReleasePrepPhase, RepositoryState, SidebarClickState, StashBranchState, StashCreateState,
+    TagCreateState, TransientStatus,
 };
 use crate::tasks;
 use crate::theme::OVERLAY_TRIGGER_SECS;
-use crate::widgets::ROW_HEIGHT as COMMIT_ROW_HEIGHT;
+use crate::widgets::{Toast, ROW_HEIGHT as COMMIT_ROW_HEIGHT};
 use crate::App;
 
 const TRANSIENT_STATUS_DURATION: Duration = Duration::from_secs(3);
@@ -68,6 +68,7 @@ impl App {
                 match result {
                     Ok(status_detail) => self.apply_refreshed_status_detail(status_detail),
                     Err(msg) => {
+                        self.toasts.push(Toast::failure(msg.as_str()));
                         self.operation.error = Some(msg);
                         Task::none()
                     }
@@ -369,6 +370,16 @@ impl App {
                     result,
                     severity,
                 } => {
+                    if let OpResult::Failed(ref msg) = result {
+                        match severity {
+                            OpSeverity::Recoverable => {
+                                self.toasts.push(Toast::failure(msg.as_str()));
+                            }
+                            OpSeverity::Fatal => {
+                                self.operation.fatal_error = Some(msg.clone());
+                            }
+                        }
+                    }
                     let _ = self.operation_tracker.complete(id, result, severity);
                     Task::none()
                 }
@@ -1417,6 +1428,7 @@ impl App {
                 }
             }
             TabsMessage::Restored(Err(msg)) => {
+                self.toasts.push(Toast::failure(msg.as_str()));
                 self.operation.error = Some(msg);
                 Task::none()
             }

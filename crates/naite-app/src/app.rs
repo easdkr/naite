@@ -516,7 +516,11 @@ impl App {
     }
 
     pub(crate) fn error_recovery_action(&self) -> Option<crate::widgets::ErrorRecovery<'static>> {
-        let err = self.operation.fatal_error.as_deref()?;
+        let err = self
+            .operation
+            .fatal_error
+            .as_deref()
+            .or(self.operation.error.as_deref())?;
         if !crate::features::push::is_non_fast_forward_rejection(err) {
             return None;
         }

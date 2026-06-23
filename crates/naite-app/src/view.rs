@@ -102,13 +102,16 @@ impl App {
                             * (1.0 - self.preferences.sidebar_ratio.clamp(0.14, 0.36))
                             * self.preferences.detail_ratio.clamp(0.50, 0.78);
                         let error_recovery = self.error_recovery_action();
+                        let fatal_error = self.operation.fatal_error.as_deref().or_else(|| {
+                            error_recovery.as_ref().and(self.operation.error.as_deref())
+                        });
                         let commit_list = widgets::commit_list(widgets::CommitListProps {
                             commits: &self.repo.commits,
                             visible_indices,
                             selected: self.selected_index(),
                             wip_selected: self.selection.selected_wip,
                             status_detail: &self.repo.status_detail,
-                            fatal_error: self.operation.fatal_error.as_deref(),
+                            fatal_error,
                             error_recovery,
                             graph_layout: &self.repo.graph_layout,
                             refs: &self.repo.refs,
