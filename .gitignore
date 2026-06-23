@@ -12,3 +12,4 @@
 
 # Local OMC state
 .omc/
+.omo/
