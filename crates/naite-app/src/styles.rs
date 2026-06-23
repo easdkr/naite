@@ -452,6 +452,37 @@ pub fn ghost_action_chip(_: &Theme) -> container::Style {
     }
 }
 
+// ---------- progress overlay ----------
+
+/// Semi-transparent backdrop used behind the central progress overlay
+/// (Task 15). Dims the underlying UI without capturing pointer events —
+/// unlike the modal primitive, the overlay is non-blocking (no
+/// click-to-dismiss; the trigger condition in Task 20 removes it when
+/// the operation completes). The alpha is static (no entry animation);
+/// the animated motion lives on the moving bar inside the card.
+pub fn progress_overlay_backdrop(_: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(color::with_alpha(color::BG, 0.55))),
+        ..Default::default()
+    }
+}
+
+/// Elevated surface card used to host the central progress overlay
+/// (spinner + label + step counter). Sits one step above the dimmed
+/// backdrop via SURFACE_2 fill + hairline BORDER + R_MD, matching the
+/// modal's card surface family so the two feel like the same system.
+pub fn progress_overlay_card(_: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(color::SURFACE_2)),
+        border: Border {
+            color: color::BORDER,
+            width: 1.0,
+            radius: theme::R_MD.into(),
+        },
+        ..Default::default()
+    }
+}
+
 // ---------- buttons ----------
 
 /// Primary CTA button (Open repository …).

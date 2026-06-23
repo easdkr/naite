@@ -701,3 +701,57 @@ The task constraint says "DO NOT modify update.rs for release_prep routing (Task
 ### Commit
 - Message: `feat(release_prep): add ReleasePrepStep enum and preparing step state fields`
 - Pre-commit verification: `cargo test --workspace --locked -- release_prep` → 21 passed
+
+## Wave 3 — Task 15: Central progress overlay widget (2026-06-23)
+
+### Files changed
+- `crates/naite-app/src/widgets/progress_overlay.rs` (NEW, 75 LOC)
+- `crates/naite-app/src/widgets/mod.rs` — `mod progress_overlay;` + `pub use progress_overlay::progress_overlay;`
+- `crates/naite-app/src/styles.rs` — new `// ---------- progress overlay ----------` section with `progress_overlay_backdrop` and `progress_overlay_card`
+
+### Design decisions
+1. **Backdrop does NOT capture pointer events.** Unlike `widgets/modal.rs::modal_with_progress` which wraps the backdrop in `mouse_area(...).on_press(on_dismiss)`, the progress overlay uses a bare `container` for the backdrop. The overlay is non-modal: v1 has no cancel button, and the trigger condition (Task 20) removes the overlay when the operation completes. Click-through to the underlying UI is intentional — the user can keep working while the operation runs.
+2. **Static alpha, animated bar.** Backdrop uses `color::with_alpha(color::BG, 0.55)` (no `progress` parameter). All visual motion lives on `moving_progress_bar(frame)` inside the card. This matches the "calm chrome, animated core" pattern used elsewhere (e.g., terminal status chip).
+3. **Card width fixed at 420px.** Smaller than `MODAL_MAX_WIDTH=480` because the overlay is a passive indicator, not an interactive form. Single child (label) doesn't need scrollable wrapper. `SP_LG` (16) padding matches modal padding for visual consistency.
+4. **Step counter is conditional.** Uses `if let Some((current, total)) = op.step` to push the `Step X/Y` text only when the operation has reported a step. `ActiveOperation.step: Option<(usize, usize)>` is `None` for ops that don't expose step granularity (e.g., auto-fetch), so the card stays compact in those cases.
+5. **"Step X/Y" uses English (not "단계 X/Y").** Consistent with the rest of the app's English chrome (e.g., "Loading..." in toolbar, release_prep's "Step" labels). The spec offered either; picked English for system consistency.
+
+### Style placement
+- New section `// ---------- progress overlay ----------` placed AFTER `ghost_action_chip` (the previous final `// ---------- ` style section) and BEFORE the `// ---------- buttons ----------` section. Followed the file's existing section ordering convention (container surfaces → scrollable → progress overlay → buttons).
+- `progress_overlay_card` uses `SURFACE_2 + BORDER(1.0) + R_MD(5.0)` — same triple as `inset_card` (style family match for any "elevated plate" surface).
+- `progress_overlay_backdrop` uses `color::with_alpha(color::BG, 0.55)` — slightly less aggressive than the modal's `0.6 * progress` peak so the underlying UI is readable while the overlay is active.
+
+### Inherited pre-existing state (not from Task 15)
+- `crates/naite-app/src/features/release_prep/message.rs` + `update.rs` — already-modified by another wave to add `PrepareStepStarted(ReleasePrepStep)` and `PrepareStepDone { step, result }` variants. The match in `update.rs:62-63` covers both, so the code is exhaustive. Task 15 did not touch these files.
+- `crates/naite-app/src/widgets/status_bar.rs` — pre-existing untracked file (Task 12 partial). Compiles cleanly, just adds 1 extra "never used" warning.
+- `crates/naite-app/src/state.rs` — pre-existing diff adds `preparing_step`, `completed_preparing_steps` fields, `ReleasePrepStep` enum, and `PrepareStepOutcome` struct. Task 15 did not touch state.rs.
+- The pre-existing `OperationTracker.active_long_running(threshold_secs: u64) -> Option<&ActiveOperation>` (state.rs:309-320) is the consumer-facing API that Task 20 will call to decide when to show this overlay. Threshold comes from `theme::OVERLAY_TRIGGER_SECS = 2`.
+
+### Pre-positioned warnings (Task 20 will resolve)
+- `progress_overlay` (function never used)
+- `progress_overlay_card` (function never used)
+- `progress_overlay_backdrop` (function never used)
+- `OVERLAY_CARD_WIDTH` (const never used, transitive via the function)
+- `pub use progress_overlay::progress_overlay` (unused re-export at mod.rs:41)
+
+Total new warnings introduced by Task 15: 5. All pre-positioned for Task 20 (central overlay trigger). Same accepted pattern as Tasks 1/2/5 (animation hoist + theme constants + OperationTracker types).
+
+### Verification
+- `cargo build -p naite-app` → Finished, 0 errors, 23 warnings (was 14 pre-Task-15 + 5 from Task 15 + 4 from pre-existing untracked status_bar.rs work)
+- `cargo test --workspace --locked` → 378 naite-app + 265 naite-core + 0 doc = 643 passed, 0 failed (matches Wave 2 baseline exactly; 0 regressions)
+- `cargo fmt --all -- --check` → Task 15 files clean (only pre-existing diffs in `message.rs` and `status_bar.rs` from other waves)
+- `cargo clippy -p naite-app --all-targets --locked` → no new clippy findings from Task 15 (just the pre-positioned dead_code warnings)
+
+### Why no inline Style literals
+- Task spec explicit "no inline Style literals" rule honoured. Both `progress_overlay_backdrop` and `progress_overlay_card` are top-level `pub fn` in styles.rs so they're reachable via `crate::styles::progress_overlay_card` from the widget.
+
+### Why no cancel button
+- v1 explicitly excludes cancel per the plan ("NO cancel button (v1 doesn't support cancel)"). The backdrop is also click-through for the same reason — there's no way for the user to dismiss the overlay until the operation completes (or fails) on its own.
+
+### Risk / out-of-scope
+- 420px fixed card width may feel tight on very narrow windows (min_size is 1024px so this should never be an issue in practice). If a future task ever relaxes the window min_size, the card may need to switch to `Length::Fill` with a max.
+- English "Step X/Y" was picked over Korean "단계 X/Y" for consistency. If a future task adds a Korean localization pass, the string should be moved to a centralized i18n table.
+- The overlay deliberately does not include the release_prep full step list (per spec — Task 21). When Task 21 is integrated, the existing `release_prep_progress` widget will need to either compose this overlay or be called in addition to it.
+
+### Evidence
+- `.omo/evidence/task-15-overlay-build.txt` — `cargo build` + `cargo test` + `cargo fmt --check` summary.

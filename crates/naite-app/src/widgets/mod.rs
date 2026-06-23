@@ -10,6 +10,7 @@ mod forms;
 mod modal;
 mod pills;
 mod preferences;
+mod progress_overlay;
 mod prompts;
 mod rebase_editor;
 mod release_prep;
@@ -36,6 +37,7 @@ pub use forms::{
 };
 pub use modal::{animated_modal, modal, wide_modal};
 pub use preferences::{display_options_panel, shortcut_help_overlay};
+pub use progress_overlay::progress_overlay;
 pub use prompts::{
     branch_delete_prompt, checkout_prompt, discard_prompt, force_push_prompt, force_sync_prompt,
     history_prompt, rebase_prompt, stash_prompt, tag_delete_prompt, undo_prompt,
