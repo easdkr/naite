@@ -59,6 +59,8 @@ impl App {
             }
             ReleasePrepMessage::ProfileSubmitted => self.submit_release_prep_profile(),
             ReleasePrepMessage::Prepared(result) => self.finish_release_prepare(*result),
+            ReleasePrepMessage::PrepareStepStarted(_step) => Task::none(),
+            ReleasePrepMessage::PrepareStepDone { .. } => Task::none(),
             ReleasePrepMessage::AutoRequested => self.start_release_prep_auto(),
             ReleasePrepMessage::ActionRequested(action) => self.start_release_prep_action(action),
             ReleasePrepMessage::ActionDone { action, result } => {

@@ -1,5 +1,7 @@
 use naite_core::{ReleaseProfileSuggestion, ReleaseSyncCheck};
 
+use crate::state::{PrepareStepOutcome, ReleasePrepStep};
+
 use super::task::PrepareOutcome;
 
 #[derive(Debug, Clone)]
@@ -15,6 +17,11 @@ pub enum Message {
     Cancelled,
     ProfileSubmitted,
     Prepared(Box<Result<PrepareOutcome, String>>),
+    PrepareStepStarted(ReleasePrepStep),
+    PrepareStepDone {
+        step: ReleasePrepStep,
+        result: Box<Result<PrepareStepOutcome, String>>,
+    },
     AutoRequested,
     ActionRequested(ReleasePrepAction),
     ActionDone {

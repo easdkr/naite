@@ -12,6 +12,7 @@ use naite_core::{
 };
 
 use crate::{
+    features::rebase::RebasePlanRow,
     features::release_prep::ReleasePrepAction,
     features::terminal::{TerminalSessionId, TerminalTarget},
     theme::OP_HISTORY_CAP,
@@ -482,6 +483,33 @@ pub struct ReleasePrepState {
     pub auto_next_action: Option<ReleasePrepAction>,
     pub active_action: Option<ReleasePrepAction>,
     pub completed_actions: Vec<ReleasePrepAction>,
+    pub preparing_step: Option<ReleasePrepStep>,
+    pub completed_preparing_steps: Vec<ReleasePrepStep>,
+}
+
+/// Ordered phases the release-prep prepare pipeline can be in.
+/// `B0` (operation-state + dirty-worktree pre-flight) runs as part of the
+/// outer `spawn_blocking` guard in `task::prepare` and is not a user-facing
+/// step; the six variants below mirror the six user-visible steps
+/// (B1..B7) the pipeline executes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReleasePrepStep {
+    FetchingRemote,
+    SyncingBranches,
+    CheckingSync,
+    CheckingOutSource,
+    CreatingBackup,
+    BuildingPlan,
+}
+
+/// Per-step output carried from one step to the next while the release-prep
+/// `prepare()` pipeline is split into individual async steps. Each field is
+/// populated only by the step that produces it.
+#[derive(Debug, Clone, Default)]
+pub struct PrepareStepOutcome {
+    pub sync_check: Option<ReleaseSyncCheck>,
+    pub backup_branch_name: Option<String>,
+    pub plan_entries: Option<Vec<RebasePlanRow>>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
