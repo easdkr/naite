@@ -1,7 +1,7 @@
 //! Shared primitives used across more than one widget submodule.
 
 use iced::widget::{button, column, container, row, text, text::Wrapping, Space};
-use iced::{Alignment, Element, Length, Padding};
+use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Theme};
 use naite_core::WorktreeStatusDetail;
 
 use crate::icons::{self, IconName};
@@ -260,4 +260,75 @@ pub(super) fn format_relative_time(secs: i64) -> String {
     } else {
         format!("{} y ago", diff / 31_536_000)
     }
+}
+
+const PROGRESS_TRACK_WIDTH: f32 = 320.0;
+const PROGRESS_SEGMENT_WIDTH: f32 = 92.0;
+
+pub fn spinner_frame(frame: usize) -> &'static str {
+    ["|", "/", "-", "\\"][frame % 4]
+}
+
+pub fn animated_dots(frame: usize) -> &'static str {
+    match (frame / 4) % 4 {
+        0 => "",
+        1 => ".",
+        2 => "..",
+        _ => "...",
+    }
+}
+
+pub fn moving_progress_bar(frame: usize) -> Element<'static, Message> {
+    let cycle = (frame % 32) as f32 / 31.0;
+    let lead_width = ease_in_out_sine(cycle) * (PROGRESS_TRACK_WIDTH - PROGRESS_SEGMENT_WIDTH);
+
+    container(
+        row![
+            Space::with_width(Length::Fixed(lead_width)),
+            container(Space::new(
+                Length::Fixed(PROGRESS_SEGMENT_WIDTH),
+                Length::Fixed(3.0)
+            ))
+            .style(progress_segment_style(frame)),
+            Space::with_width(Length::Fill),
+        ]
+        .align_y(Alignment::Center),
+    )
+    .width(Length::Fixed(PROGRESS_TRACK_WIDTH))
+    .height(Length::Fixed(3.0))
+    .style(progress_track_style)
+    .into()
+}
+
+fn progress_track_style(_: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(color::with_alpha(color::BORDER, 0.55))),
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: theme::R_PILL.into(),
+        },
+        ..Default::default()
+    }
+}
+
+fn progress_segment_style(frame: usize) -> impl Fn(&Theme) -> container::Style {
+    let pulse = 0.65
+        + 0.25
+            * (((frame % 16) as f32 / 15.0) * std::f32::consts::TAU)
+                .sin()
+                .abs();
+    move |_| container::Style {
+        background: Some(Background::Color(color::with_alpha(color::ACCENT, pulse))),
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: theme::R_PILL.into(),
+        },
+        ..Default::default()
+    }
+}
+
+pub fn ease_in_out_sine(progress: f32) -> f32 {
+    -(std::f32::consts::PI * progress).cos() / 2.0 + 0.5
 }
