@@ -4741,7 +4741,7 @@ fn error_recovery_offers_force_push_on_non_fast_forward() {
             ..Default::default()
         },
         operation: OperationState {
-            error: Some(
+            fatal_error: Some(
                 "git push: ! [rejected] staging -> staging (non-fast-forward)\n\
                  error: failed to push some refs"
                     .into(),

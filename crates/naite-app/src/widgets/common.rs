@@ -1,10 +1,13 @@
 //! Shared primitives used across more than one widget submodule.
 
+use std::borrow::Cow;
+
 use iced::widget::{button, column, container, row, text, text::Wrapping, Space};
 use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Theme};
 use naite_core::WorktreeStatusDetail;
 
 use crate::icons::{self, IconName};
+use crate::state::OpSeverity;
 use crate::styles;
 use crate::theme::{self, color};
 use crate::Message;
@@ -33,9 +36,21 @@ pub struct ErrorRecovery<'a> {
 
 pub(super) fn error_card<'a>(
     err: &'a str,
+    severity: OpSeverity,
     recovery: Option<ErrorRecovery<'a>>,
 ) -> Element<'a, Message> {
-    let display_error = crate::error_display::format_git_error_for_display(err);
+    let display_error: Cow<'a, str> = crate::error_display::format_git_error_for_display(err);
+    match severity {
+        OpSeverity::Fatal => fatal_error_card(display_error, recovery),
+        OpSeverity::Recoverable => recoverable_error_card(display_error),
+    }
+}
+
+/// Full blocking card for Fatal errors (with optional recovery action).
+fn fatal_error_card<'a>(
+    display_error: Cow<'a, str>,
+    recovery: Option<ErrorRecovery<'a>>,
+) -> Element<'a, Message> {
     let mut actions = row![].align_y(Alignment::Center).spacing(theme::SP_SM);
     if let Some(recovery) = recovery {
         actions = actions.push(
@@ -72,6 +87,32 @@ pub(super) fn error_card<'a>(
     )
     .padding(theme::SP_LG)
     .style(styles::error_card)
+    .into()
+}
+
+/// Compact pill for Recoverable errors (mirrors `status_bar::error_pill`).
+fn recoverable_error_card<'a>(display_error: Cow<'a, str>) -> Element<'a, Message> {
+    container(
+        row![
+            text("✗")
+                .size(theme::FS_SM)
+                .font(theme::font_semibold())
+                .color(color::DANGER),
+            text(display_error)
+                .size(theme::FS_SM)
+                .font(theme::font_regular())
+                .color(color::TEXT),
+            Space::with_width(Length::Fill),
+            button(text("Dismiss").size(theme::FS_SM).wrapping(Wrapping::None))
+                .padding(Padding::from([2, theme::SP_SM]))
+                .style(styles::subtle_button)
+                .on_press(Message::ClearError),
+        ]
+        .align_y(Alignment::Center)
+        .spacing(theme::SP_SM),
+    )
+    .padding(Padding::from([2, theme::SP_MD]))
+    .style(styles::error_pill)
     .into()
 }
 

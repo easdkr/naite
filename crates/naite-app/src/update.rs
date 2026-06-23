@@ -18,6 +18,7 @@ use crate::state::{
     TransientStatus,
 };
 use crate::tasks;
+use crate::theme::OVERLAY_TRIGGER_SECS;
 use crate::widgets::ROW_HEIGHT as COMMIT_ROW_HEIGHT;
 use crate::App;
 
@@ -331,6 +332,13 @@ impl App {
                     let now = Instant::now();
                     self.toasts.retain(|toast| !toast.is_expired(now));
                 }
+                // Reuse the same tick for overlay visibility bookkeeping.
+                // ReleasePrep ops surface immediately; everything else
+                // waits for OVERLAY_TRIGGER_SECS of elapsed time so fast
+                // ops never flash the overlay card.
+                self.overlay_visible = self
+                    .operation_tracker
+                    .should_show_overlay(OVERLAY_TRIGGER_SECS);
                 Task::none()
             }
             Message::ToastDismissed { index } => {
@@ -340,6 +348,29 @@ impl App {
                 Task::none()
             }
             Message::Operation(event) => match event {
+                crate::message::OperationEvent::Started { id, kind, label } => {
+                    let _ = self.operation_tracker.start_with_id(id, kind, label);
+                    Task::none()
+                }
+                crate::message::OperationEvent::StepProgressed {
+                    id,
+                    label,
+                    current,
+                    total,
+                } => {
+                    let _ = self
+                        .operation_tracker
+                        .update_step(id, label, current, total);
+                    Task::none()
+                }
+                crate::message::OperationEvent::Completed {
+                    id,
+                    result,
+                    severity,
+                } => {
+                    let _ = self.operation_tracker.complete(id, result, severity);
+                    Task::none()
+                }
                 crate::message::OperationEvent::Dismissed { id } => {
                     // Errors from the tracker (stale ids, double-dismiss)
                     // are intentionally swallowed: the UI event is the
@@ -369,6 +400,7 @@ impl App {
             Message::CopyText(text) => iced::clipboard::write(text),
             Message::ClearError => {
                 self.operation.error = None;
+                self.operation.fatal_error = None;
                 self.operation.transient_status = None;
                 Task::none()
             }

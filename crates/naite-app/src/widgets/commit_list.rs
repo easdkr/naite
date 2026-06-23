@@ -25,6 +25,7 @@ use super::common::{
     max_chars_for_width, status_summary_title, truncate_with_ellipsis, ErrorRecovery,
 };
 use super::ROW_HEIGHT;
+use crate::state::OpSeverity;
 
 const GRAPH_MIN_WIDTH: f32 = 26.0;
 pub(crate) const GRAPH_LANE_GAP: f32 = 22.0;
@@ -58,7 +59,10 @@ pub struct CommitListProps<'a> {
     pub selected: Option<usize>,
     pub wip_selected: bool,
     pub status_detail: &'a WorktreeStatusDetail,
-    pub error: Option<&'a str>,
+    /// Fatal errors that block the commit list with a recovery card.
+    /// `None` for recoverable errors — those flow to `bottom_status_bar`
+    /// via `OperationTracker` and the commit list renders normally.
+    pub fatal_error: Option<&'a str>,
     pub error_recovery: Option<ErrorRecovery<'a>>,
     pub graph_layout: &'a GraphLayout,
     pub refs: &'a Refs,
@@ -77,7 +81,7 @@ pub fn commit_list<'a>(props: CommitListProps<'a>) -> Element<'a, Message> {
         selected,
         wip_selected,
         status_detail,
-        error,
+        fatal_error,
         error_recovery,
         graph_layout,
         refs,
@@ -89,8 +93,10 @@ pub fn commit_list<'a>(props: CommitListProps<'a>) -> Element<'a, Message> {
         loading_more_commits,
     } = props;
 
-    let inner: Element<'a, Message> = if let Some(err) = error {
-        container(error_card(err, error_recovery))
+    let inner: Element<'a, Message> = if let Some(fatal_err) = fatal_error {
+        // Recoverable errors are intentionally NOT routed through this
+        // branch — see `fatal_error` field docs.
+        container(error_card(fatal_err, OpSeverity::Fatal, error_recovery))
             .padding(theme::SP_LG)
             .into()
     } else if commits.is_empty() && !status_detail.is_dirty() {

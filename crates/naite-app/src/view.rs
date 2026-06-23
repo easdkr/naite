@@ -108,7 +108,7 @@ impl App {
                             selected: self.selected_index(),
                             wip_selected: self.selection.selected_wip,
                             status_detail: &self.repo.status_detail,
-                            error: self.operation.error.as_deref(),
+                            fatal_error: self.operation.fatal_error.as_deref(),
                             error_recovery,
                             graph_layout: &self.repo.graph_layout,
                             refs: &self.repo.refs,
@@ -445,12 +445,18 @@ impl App {
         layered = layered.push(context_menu_overlay);
         // Toast layer + progress overlay are the topmost surfaces; they
         // sit above modals/context menus so users always see completion
-        // feedback regardless of what modal is open. The overlay trigger
-        // threshold (currently 0 = always) is tightened by Task 20 to
-        // `OVERLAY_TRIGGER_SECS` so only long-running ops surface the
-        // overlay card.
+        // feedback regardless of what modal is open. Overlay visibility
+        // is computed in update.rs on every TransientStatusTick
+        // (ReleasePrep shows immediately, everything else waits
+        // OVERLAY_TRIGGER_SECS). The id is looked up by
+        // active().iter().find() so a stale id (op completed between
+        // tick and render) silently resolves to None rather than
+        // dereferencing a freed reference.
         layered = layered.push(widgets::toast_layer(&self.toasts));
-        if let Some(op) = self.operation_tracker.active_long_running(0) {
+        if let Some(op) = self
+            .overlay_visible
+            .and_then(|id| self.operation_tracker.active().iter().find(|op| op.id == id))
+        {
             layered = layered.push(widgets::progress_overlay(op, self.status_animation_frame));
         }
         layered.into()

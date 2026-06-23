@@ -13,7 +13,8 @@ use crate::features::{
     repo_open, reset, revert, stage, stash, tag, terminal, workspace, worktree,
 };
 use crate::state::{
-    ContextMenuKind, DensityPreference, DiffViewMode, OperationId, SidebarSection, ThemePreference,
+    ContextMenuKind, DensityPreference, DiffViewMode, OpResult, OpSeverity, OperationId,
+    OperationKind, SidebarSection, ThemePreference,
 };
 
 #[derive(Debug, Clone)]
@@ -113,11 +114,40 @@ pub enum Message {
 }
 
 /// Lifecycle events emitted by feature operations. Dispatched into
-/// `OperationTracker` from the global `update` arm. Only the dismiss
-/// variant is currently routed (Wave 3 Task 13); feature migration
-/// waves (Tasks 18/22) will add Started/Completed/StepUpdated/etc.
+/// `OperationTracker` from the global `update` arm. The dismiss variant
+/// was wired in Wave 3 Task 13; `Started` / `StepProgressed` / `Completed`
+/// were added by Wave 3 Task 18 (auto_fetch + release_prep pattern
+/// establishment) so Task 22 can mechanically migrate the remaining ~60
+/// `ManualAction` call sites.
 #[derive(Debug, Clone)]
 pub enum OperationEvent {
+    /// A feature handler has begun a new operation. Routes to
+    /// `OperationTracker::start_with_id` and stashes the id for the
+    /// matching `Completed` event.
+    Started {
+        id: OperationId,
+        kind: OperationKind,
+        label: String,
+    },
+    /// The in-flight operation has advanced to a new step. Routes to
+    /// `OperationTracker::update_step`. Used by multi-step pipelines
+    /// such as release-prep `prepare()` to surface progress in the
+    /// status bar without ending the operation.
+    StepProgressed {
+        id: OperationId,
+        label: String,
+        current: usize,
+        total: usize,
+    },
+    /// The operation has finished. Routes to
+    /// `OperationTracker::complete`. `severity` decides whether the
+    /// result is surfaced as a bottom toast (Recoverable) or a
+    /// blocking card (Fatal).
+    Completed {
+        id: OperationId,
+        result: OpResult,
+        severity: OpSeverity,
+    },
     /// User dismissed a completed (Recoverable-failed) operation from the
     /// bottom status bar. Carries the tracker's monotonic id so the
     /// matching history entry can be removed.

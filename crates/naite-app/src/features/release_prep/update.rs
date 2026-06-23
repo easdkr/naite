@@ -3,7 +3,8 @@ use naite_core::ReleaseProfile;
 
 use crate::features::release_prep::{self, Message as ReleasePrepMessage, ReleasePrepAction};
 use crate::features::repo_open;
-use crate::state::ReleasePrepPhase;
+use crate::message::OperationEvent;
+use crate::state::{OpResult, OpSeverity, OperationKind, ReleasePrepPhase, ReleasePrepStep};
 use crate::{features::rebase::InteractiveRebaseSession, App, Message};
 
 pub(crate) const DIRTY_WORKTREE_RELEASE_ERROR: &str =
@@ -59,8 +60,18 @@ impl App {
             }
             ReleasePrepMessage::ProfileSubmitted => self.submit_release_prep_profile(),
             ReleasePrepMessage::Prepared(result) => self.finish_release_prepare(*result),
-            ReleasePrepMessage::PrepareStepStarted(_step) => Task::none(),
-            ReleasePrepMessage::PrepareStepDone { .. } => Task::none(),
+            ReleasePrepMessage::PrepareStepStarted(step) => {
+                self.release_prep.preparing_step = Some(step);
+                Task::done(self.step_progressed_event(step))
+            }
+            ReleasePrepMessage::PrepareStepDone { step, result } => {
+                self.release_prep.completed_preparing_steps.push(step);
+                self.release_prep.preparing_step = None;
+                match *result {
+                    Ok(_) => Task::done(self.step_progressed_event(step)),
+                    Err(message) => Task::done(self.step_failed_event(step, &message)),
+                }
+            }
             ReleasePrepMessage::AutoRequested => self.start_release_prep_auto(),
             ReleasePrepMessage::ActionRequested(action) => self.start_release_prep_action(action),
             ReleasePrepMessage::ActionDone { action, result } => {
@@ -85,9 +96,15 @@ impl App {
             self.release_prep.phase = ReleasePrepPhase::Preparing;
             self.release_prep.animation_frame = 0;
             self.operation.loading = true;
-            return Task::perform(release_prep::task::load_suggestion(path), |result| {
-                Message::from(ReleasePrepMessage::SuggestionLoaded(result))
-            });
+            let start = Task::done(Message::Operation(OperationEvent::Started {
+                id: self.operation_tracker.next_id(),
+                kind: OperationKind::ReleasePrep,
+                label: "Preparing release promotion...".to_string(),
+            }));
+            return start.chain(Task::perform(
+                release_prep::task::load_suggestion(path),
+                |result| Message::from(ReleasePrepMessage::SuggestionLoaded(result)),
+            ));
         }
         if let Some(profile) = self.preferences.release_profiles.get(&path).cloned() {
             self.release_prep.remote = profile.remote.clone();
@@ -100,9 +117,15 @@ impl App {
             self.release_prep.phase = ReleasePrepPhase::Preparing;
             self.release_prep.animation_frame = 0;
             self.operation.loading = true;
-            Task::perform(release_prep::task::load_suggestion(path), |result| {
-                Message::from(ReleasePrepMessage::SuggestionLoaded(result))
-            })
+            let start = Task::done(Message::Operation(OperationEvent::Started {
+                id: self.operation_tracker.next_id(),
+                kind: OperationKind::ReleasePrep,
+                label: "Loading release suggestion...".to_string(),
+            }));
+            start.chain(Task::perform(
+                release_prep::task::load_suggestion(path),
+                |result| Message::from(ReleasePrepMessage::SuggestionLoaded(result)),
+            ))
         }
     }
 
@@ -121,9 +144,15 @@ impl App {
         self.release_prep.phase = ReleasePrepPhase::Preparing;
         self.release_prep.animation_frame = 0;
         self.operation.loading = true;
-        Task::perform(release_prep::task::load_suggestion(path), |result| {
-            Message::from(ReleasePrepMessage::SuggestionLoaded(result))
-        })
+        let start = Task::done(Message::Operation(OperationEvent::Started {
+            id: self.operation_tracker.next_id(),
+            kind: OperationKind::ReleasePrep,
+            label: "Loading release configuration...".to_string(),
+        }));
+        start.chain(Task::perform(
+            release_prep::task::load_suggestion(path),
+            |result| Message::from(ReleasePrepMessage::SuggestionLoaded(result)),
+        ))
     }
 
     fn open_release_prep_config(
@@ -132,6 +161,9 @@ impl App {
     ) -> Task<Message> {
         self.operation.loading = false;
         let force_config = std::mem::take(&mut self.release_prep.force_config);
+        let completion_input: Result<(), String> =
+            result.as_ref().map(|_| ()).map_err(|e| e.clone());
+        let completion = self.complete_release_prep_op(&completion_input);
         match result {
             Ok(suggestion) => {
                 let pending_error = self.release_prep.error.take();
@@ -161,7 +193,7 @@ impl App {
                 self.operation.error = Some(message);
             }
         }
-        Task::none()
+        completion
     }
 
     fn submit_release_prep_profile(&mut self) -> Task<Message> {
@@ -201,15 +233,22 @@ impl App {
         self.release_prep.auto_next_action = None;
         self.release_prep.active_action = None;
         self.release_prep.completed_actions.clear();
+        self.release_prep.preparing_step = None;
+        self.release_prep.completed_preparing_steps.clear();
         self.release_prep.error = None;
         self.release_prep.animation_frame = 0;
         self.operation.loading = true;
         self.operation.error = None;
         self.operation.pending_transient_status_after_reload = None;
-        Task::perform(
+        let start = Task::done(Message::Operation(OperationEvent::Started {
+            id: self.operation_tracker.next_id(),
+            kind: OperationKind::ReleasePrep,
+            label: "Running release prepare steps...".to_string(),
+        }));
+        start.chain(Task::perform(
             release_prep::task::prepare(path, profile, backup_before_rebase),
             |result| Message::from(ReleasePrepMessage::Prepared(Box::new(result))),
-        )
+        ))
     }
 
     fn finish_release_prepare(
@@ -217,6 +256,9 @@ impl App {
         result: Result<release_prep::task::PrepareOutcome, String>,
     ) -> Task<Message> {
         self.operation.loading = false;
+        let completion_input: Result<(), String> =
+            result.as_ref().map(|_| ()).map_err(|e| e.clone());
+        let completion = self.complete_release_prep_op(&completion_input);
         match result {
             Ok(outcome) => {
                 let picked = outcome
@@ -227,6 +269,7 @@ impl App {
                 let dropped = outcome.plan.len().saturating_sub(picked);
                 self.apply_release_prep_repo_snapshot(outcome.repo_snapshot);
                 self.release_prep.phase = ReleasePrepPhase::Idle;
+                self.release_prep.preparing_step = None;
                 self.release_prep.sync_check = Some(outcome.sync_check.clone());
                 self.rebase = Some(InteractiveRebaseSession {
                     current_branch: outcome.current_branch,
@@ -245,34 +288,33 @@ impl App {
                     status.push_str(&format!("; backup {backup}"));
                 }
                 self.set_transient_status(status);
-                // The snapshot replaced the commit list, so re-run the same
-                // avatar pipeline the repo-open path uses (image prefetch for
-                // preserved URLs + provider lookup for uncached authors)
-                // alongside the rebase plan's own resolution.
                 let commit_avatar_task = self.prefetch_commit_avatars();
                 let provider_commit_avatar_task = match self.repo.path.clone() {
                     Some(path) => self.load_provider_commit_author_avatars(path),
                     None => Task::none(),
                 };
                 let avatar_fetches = self.resolve_rebase_plan_avatars();
-                Task::batch([
+                let avatar_pipeline = Task::batch([
                     commit_avatar_task,
                     provider_commit_avatar_task,
                     avatar_fetches,
                     self.load_selected_rebase_diff(),
-                ])
+                ]);
+                completion.chain(avatar_pipeline)
             }
             Err(message) => {
                 self.release_prep.phase = ReleasePrepPhase::Configuring;
+                self.release_prep.preparing_step = None;
                 self.release_prep.animation_frame = 0;
                 self.release_prep.error = Some(message);
                 if let Some(path) = self.repo.path.clone() {
                     self.operation.loading = true;
-                    Task::perform(repo_open::task::load(path), |result| {
+                    let reload = Task::perform(repo_open::task::load(path), |result| {
                         Message::from(repo_open::Message::Loaded(Box::new(result)))
-                    })
+                    });
+                    completion.chain(reload)
                 } else {
-                    Task::none()
+                    completion
                 }
             }
         }
@@ -396,7 +438,7 @@ impl App {
             return Task::none();
         }
         if self.release_prep.active_profile.is_none() {
-            self.operation.error = Some("Plan a release promotion first".into());
+            self.operation.fatal_error = Some("Plan a release promotion first".into());
             return Task::none();
         }
         let Some(next_action) = next_incomplete_release_prep_action(
@@ -433,6 +475,11 @@ impl App {
         self.release_prep.phase = ReleasePrepPhase::RunningAction;
         self.release_prep.active_action = Some(action);
         self.release_prep.animation_frame = 0;
+        let start = Task::done(Message::Operation(OperationEvent::Started {
+            id: self.operation_tracker.next_id(),
+            kind: OperationKind::ReleasePrep,
+            label: format!("{}...", action.label()),
+        }));
         let run = Task::perform(
             release_prep::task::run_action(path, profile, action),
             move |result| {
@@ -442,7 +489,7 @@ impl App {
                 })
             },
         );
-        Task::batch([save, run])
+        Task::batch([save, start, run])
     }
 
     fn finish_release_prep_action(
@@ -452,6 +499,9 @@ impl App {
     ) -> Task<Message> {
         self.operation.loading = false;
         self.release_prep.active_action = None;
+        let completion_input: Result<(), String> =
+            result.as_ref().map(|_| ()).map_err(|e| e.clone());
+        let completion = self.complete_release_prep_op(&completion_input);
         match result {
             Ok(sync_check) => {
                 let was_auto_action = self.release_prep.auto_running;
@@ -481,12 +531,13 @@ impl App {
                     });
                 if let Some(path) = self.repo.path.clone() {
                     self.operation.loading = true;
-                    Task::perform(repo_open::task::load(path), |result| {
+                    let reload = Task::perform(repo_open::task::load(path), |result| {
                         Message::from(repo_open::Message::Loaded(Box::new(result)))
-                    })
+                    });
+                    completion.chain(reload)
                 } else {
                     self.set_transient_status(format!("{} complete", action.label()));
-                    Task::none()
+                    completion
                 }
             }
             Err(message) => {
@@ -495,9 +546,72 @@ impl App {
                 self.release_prep.phase = ReleasePrepPhase::Actions;
                 self.release_prep.animation_frame = 0;
                 self.operation.error = Some(message);
-                Task::none()
+                completion
             }
         }
+    }
+
+    /// Resolve the in-flight release-prep operation id and emit a
+    /// `Completed` event. Used at every natural endpoint of a release-prep
+    /// operation (suggestion load, prepare pipeline, action). Returns
+    /// `Task::done(...)` for the caller to chain.
+    fn complete_release_prep_op(&mut self, result: &Result<(), String>) -> Task<Message> {
+        let Some(id) = self
+            .operation_tracker
+            .current_id_for(&OperationKind::ReleasePrep)
+        else {
+            return Task::none();
+        };
+        let event = match result {
+            Ok(()) => OperationEvent::Completed {
+                id,
+                result: OpResult::Success,
+                severity: OpSeverity::Recoverable,
+            },
+            Err(message) => OperationEvent::Completed {
+                id,
+                result: OpResult::Failed(message.clone()),
+                severity: OpSeverity::Recoverable,
+            },
+        };
+        Task::done(Message::Operation(event))
+    }
+
+    /// Emit a `StepProgressed` event for an in-flight release-prep
+    /// prepare pipeline. The label flips to "<step> done" once the step's
+    /// `Done` message arrives so the status bar shows forward motion.
+    fn step_progressed_event(&self, step: ReleasePrepStep) -> Message {
+        let Some(id) = self
+            .operation_tracker
+            .current_id_for(&OperationKind::ReleasePrep)
+        else {
+            return Message::NoOp;
+        };
+        let label = if self.release_prep.completed_preparing_steps.contains(&step) {
+            format!("{} done", step.label())
+        } else {
+            step.label().to_string()
+        };
+        Message::Operation(OperationEvent::StepProgressed {
+            id,
+            label,
+            current: step.index(),
+            total: ReleasePrepStep::TOTAL,
+        })
+    }
+
+    fn step_failed_event(&self, step: ReleasePrepStep, message: &str) -> Message {
+        let Some(id) = self
+            .operation_tracker
+            .current_id_for(&OperationKind::ReleasePrep)
+        else {
+            return Message::NoOp;
+        };
+        Message::Operation(OperationEvent::Completed {
+            id,
+            result: OpResult::Failed(format!("{}: {}", step.label(), message)),
+            severity: OpSeverity::Recoverable,
+        })
     }
 }
 

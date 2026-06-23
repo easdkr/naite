@@ -150,6 +150,11 @@ pub struct OperationState {
     pub pending_error_after_reload: Option<String>,
     pub pending_force_push_after_reload: bool,
     pub error: Option<String>,
+    /// Severity-Fatal errors that must block the workflow until the user
+    /// intervenes. Surfaced as a blocking card by the central progress
+    /// overlay (Task 19). Recoverable errors stay in `error` and render
+    /// as bottom-right toasts.
+    pub fatal_error: Option<String>,
     pub loading: bool,
     pub auto_fetch_path: Option<PathBuf>,
     pub auto_fetch_last_started: Option<(PathBuf, Instant)>,
@@ -163,7 +168,7 @@ pub struct TransientStatus {
 
 pub type OperationId = usize;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum OperationKind {
     AutoFetch,
     ReleasePrep,
@@ -212,20 +217,58 @@ pub struct OperationTracker {
     in_flight: Vec<ActiveOperation>,
     history: VecDeque<CompletedOperation>,
     next_id: OperationId,
+    /// Tracks the most recent in-flight id keyed by `OperationKind` so that
+    /// feature update handlers can complete an operation they did not start
+    /// themselves (e.g. `auto_fetch` results arrive on a different message
+    /// path than the start site). The invariant — at most one in-flight
+    /// operation per `OperationKind` — is enforced by the feature guards
+    /// (e.g. `if self.operation.loading { return Task::none(); }`).
+    current: HashMap<OperationKind, OperationId>,
 }
 
 impl OperationTracker {
+    /// Peek the next operation id without starting an operation. Used by
+    /// feature handlers that want to allocate an id up-front and pass it
+    /// through a `Message::Operation(Started { id, .. })` wire event so the
+    /// global `update` arm can call `start_with_id` (preserves Elm-style
+    /// routing — all mutations flow through `Message`).
+    pub fn next_id(&self) -> OperationId {
+        self.next_id.wrapping_add(1)
+    }
+
     pub fn start(&mut self, kind: OperationKind, label: impl Into<String>) -> OperationId {
         self.next_id = self.next_id.wrapping_add(1);
         let id = self.next_id;
         self.in_flight.push(ActiveOperation {
             id,
-            kind,
+            kind: kind.clone(),
             label: label.into(),
             started_at: Instant::now(),
             step: None,
         });
+        self.current.insert(kind, id);
         id
+    }
+
+    pub fn start_with_id(
+        &mut self,
+        id: OperationId,
+        kind: OperationKind,
+        label: impl Into<String>,
+    ) -> Result<(), OperationTrackerError> {
+        if id == 0 {
+            return Err(OperationTrackerError::UnknownOperation(id));
+        }
+        self.next_id = self.next_id.max(id);
+        self.in_flight.push(ActiveOperation {
+            id,
+            kind: kind.clone(),
+            label: label.into(),
+            started_at: Instant::now(),
+            step: None,
+        });
+        self.current.insert(kind, id);
+        Ok(())
     }
 
     pub fn update_step(
@@ -257,6 +300,9 @@ impl OperationTracker {
             .position(|op| op.id == id)
             .ok_or(OperationTrackerError::UnknownOperation(id))?;
         let op = self.in_flight.remove(pos);
+        if self.current.get(&op.kind) == Some(&id) {
+            self.current.remove(&op.kind);
+        }
         self.evict_history();
         self.history.push_back(CompletedOperation {
             id,
@@ -267,6 +313,29 @@ impl OperationTracker {
             severity,
         });
         Ok(())
+    }
+
+    /// Look up the in-flight id for a given `OperationKind`, if any. Used by
+    /// feature update handlers that receive completion events (e.g. async
+    /// task results) without having the id in hand.
+    pub fn current_id_for(&self, kind: &OperationKind) -> Option<OperationId> {
+        self.current.get(kind).copied()
+    }
+
+    /// Returns the id of the in-flight operation whose central-progress
+    /// overlay should currently be rendered, if any. ReleasePrep operations
+    /// surface immediately; all other kinds wait `threshold_secs` of
+    /// elapsed time so a fast fetch (sub-second) doesn't flash the card.
+    /// Called once per `Message::TransientStatusTick`.
+    pub fn should_show_overlay(&self, threshold_secs: u64) -> Option<OperationId> {
+        let threshold = Duration::from_secs(threshold_secs);
+        self.in_flight
+            .iter()
+            .find(|op| {
+                op.started_at.elapsed() >= threshold
+                    || matches!(op.kind, OperationKind::ReleasePrep)
+            })
+            .map(|op| op.id)
     }
 
     pub fn fail(
@@ -500,6 +569,32 @@ pub enum ReleasePrepStep {
     CheckingOutSource,
     CreatingBackup,
     BuildingPlan,
+}
+
+impl ReleasePrepStep {
+    pub const TOTAL: usize = 6;
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::FetchingRemote => "Fetching remote refs",
+            Self::SyncingBranches => "Syncing source and target",
+            Self::CheckingSync => "Checking branch sync state",
+            Self::CheckingOutSource => "Checking out source branch",
+            Self::CreatingBackup => "Creating backup branch",
+            Self::BuildingPlan => "Building rebase plan",
+        }
+    }
+
+    pub fn index(self) -> usize {
+        match self {
+            Self::FetchingRemote => 1,
+            Self::SyncingBranches => 2,
+            Self::CheckingSync => 3,
+            Self::CheckingOutSource => 4,
+            Self::CreatingBackup => 5,
+            Self::BuildingPlan => 6,
+        }
+    }
 }
 
 /// Per-step output carried from one step to the next while the release-prep

@@ -189,15 +189,15 @@ impl App {
             return Task::none();
         }
         if !matches!(target.kind, RefKind::LocalBranch | RefKind::RemoteBranch) || target.is_head {
-            self.operation.error = Some("choose a non-HEAD branch as the rebase target".into());
+            self.operation.fatal_error = Some("choose a non-HEAD branch as the rebase target".into());
             return Task::none();
         }
         if self.repo.operation_state.is_busy() {
-            self.operation.error = Some("another Git operation is already in progress".into());
+            self.operation.fatal_error = Some("another Git operation is already in progress".into());
             return Task::none();
         }
         if self.repo.status_detail.is_dirty() {
-            self.operation.error = Some("worktree has local changes".into());
+            self.operation.fatal_error = Some("worktree has local changes".into());
             return Task::none();
         }
         let Some(current_branch) = self
@@ -208,7 +208,7 @@ impl App {
             .find(|branch| branch.is_head)
             .cloned()
         else {
-            self.operation.error = Some("current HEAD is detached".into());
+            self.operation.fatal_error = Some("current HEAD is detached".into());
             return Task::none();
         };
 
@@ -396,7 +396,7 @@ impl App {
             }
             RebaseApplyMode::ReleasePromotionAuto => {
                 if self.release_prep.active_profile.is_none() {
-                    self.operation.error = Some("Plan a release promotion first".into());
+                    self.operation.fatal_error = Some("Plan a release promotion first".into());
                     return Task::none();
                 }
             }
@@ -570,7 +570,7 @@ impl App {
                     })
                 } else {
                     self.set_transient_status("Interactive rebase paused on conflicts".into());
-                    self.operation.error = Some(message);
+                    self.operation.fatal_error = Some(message);
                     Task::none()
                 }
             }
