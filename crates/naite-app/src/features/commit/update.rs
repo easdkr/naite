@@ -2,7 +2,7 @@ use iced::Task;
 use naite_core::CommitOptions;
 
 use crate::features::commit::{self, Message as CommitMessage};
-use crate::state::CommitFormState;
+use crate::state::{CommitFormState, OperationKind};
 use crate::{features::repo_open, App, Message};
 
 impl App {
@@ -34,6 +34,10 @@ impl App {
             }
             CommitMessage::Requested => self.start_commit(),
             CommitMessage::Done(result) => {
+                let completion = self.complete_manual_op(
+                    &OperationKind::ManualAction("commit"),
+                    result.as_ref().map(|_| ()).map_err(|e| e.clone()),
+                );
                 self.operation.loading = false;
                 match result {
                     Ok(outcome) => {
@@ -42,16 +46,25 @@ impl App {
                             self.operation.pending_transient_status_after_reload =
                                 Some(commit_success_message(outcome.pushed));
                             self.operation.loading = true;
-                            Task::perform(repo_open::task::load(path), |result| {
-                                Message::from(repo_open::Message::Loaded(Box::new(result)))
-                            })
+                            let reload_start = self.start_manual_op(
+                                OperationKind::Custom("repo_open".to_string()),
+                                "Reloading repository…".to_string(),
+                            );
+                            completion.chain(
+                                reload_start.chain(Task::perform(
+                                    repo_open::task::load(path),
+                                    |result| {
+                                        Message::from(repo_open::Message::Loaded(Box::new(result)))
+                                    },
+                                )),
+                            )
                         } else {
-                            Task::none()
+                            completion
                         }
                     }
                     Err(msg) => {
                         self.operation.error = Some(msg);
-                        Task::none()
+                        completion
                     }
                 }
             }
@@ -79,10 +92,14 @@ impl App {
             amend: self.commit_form.amend,
             skip_hooks: self.commit_form.skip_hooks,
         };
-        Task::perform(
+        let start = self.start_manual_op(
+            OperationKind::ManualAction("commit"),
+            "Committing staged changes…".to_string(),
+        );
+        start.chain(Task::perform(
             commit::task::run(path, options, self.commit_form.push_after),
             |result| Message::from(CommitMessage::Done(result)),
-        )
+        ))
     }
 }
 

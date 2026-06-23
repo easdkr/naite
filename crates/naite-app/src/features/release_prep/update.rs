@@ -1,10 +1,14 @@
 use iced::Task;
 use naite_core::ReleaseProfile;
 
-use crate::features::release_prep::{self, Message as ReleasePrepMessage, ReleasePrepAction};
+use crate::features::release_prep::{
+    self, Message as ReleasePrepMessage, ReleasePrepAction,
+};
 use crate::features::repo_open;
 use crate::message::OperationEvent;
-use crate::state::{OpResult, OpSeverity, OperationKind, ReleasePrepPhase, ReleasePrepStep};
+use crate::state::{
+    OpResult, OpSeverity, OperationKind, PrepareStepOutcome, ReleasePrepPhase, ReleasePrepStep,
+};
 use crate::{features::rebase::InteractiveRebaseSession, App, Message};
 
 pub(crate) const DIRTY_WORKTREE_RELEASE_ERROR: &str =
@@ -62,14 +66,46 @@ impl App {
             ReleasePrepMessage::Prepared(result) => self.finish_release_prepare(*result),
             ReleasePrepMessage::PrepareStepStarted(step) => {
                 self.release_prep.preparing_step = Some(step);
-                Task::done(self.step_progressed_event(step))
+                let progress = Task::done(self.step_progressed_event(step));
+                let step_task = self.dispatch_prepare_step(step);
+                Task::batch([progress, step_task])
             }
             ReleasePrepMessage::PrepareStepDone { step, result } => {
                 self.release_prep.completed_preparing_steps.push(step);
                 self.release_prep.preparing_step = None;
                 match *result {
-                    Ok(_) => Task::done(self.step_progressed_event(step)),
-                    Err(message) => Task::done(self.step_failed_event(step, &message)),
+                    Ok(outcome) => {
+                        merge_prepare_step_outcome(
+                            &mut self.release_prep.prepare_acc,
+                            outcome,
+                        );
+                        let progress = Task::done(self.step_progressed_event(step));
+                        match next_release_prep_step(step) {
+                            Some(next_step) => {
+                                let next_dispatch = Task::done(Message::from(
+                                    ReleasePrepMessage::PrepareStepStarted(next_step),
+                                ));
+                                Task::batch([progress, next_dispatch])
+                            }
+                            None => progress.chain(self.finalize_release_prepare_outcome()),
+                        }
+                    }
+                    Err(message) => {
+                        self.release_prep.phase = ReleasePrepPhase::Configuring;
+                        self.release_prep.error = Some(message.clone());
+                        let step_failed = Task::done(self.step_failed_event(step, &message));
+                        let completion =
+                            self.complete_release_prep_op(&Err(message.clone()));
+                        let reload = if let Some(path) = self.repo.path.clone() {
+                            self.operation.loading = true;
+                            Task::perform(repo_open::task::load(path), |result| {
+                                Message::from(repo_open::Message::Loaded(Box::new(result)))
+                            })
+                        } else {
+                            Task::none()
+                        };
+                        Task::batch([completion, step_failed, reload])
+                    }
                 }
             }
             ReleasePrepMessage::AutoRequested => self.start_release_prep_auto(),
@@ -112,7 +148,7 @@ impl App {
             self.release_prep.target_branch = profile.target_branch.clone();
             self.release_prep.validation_script =
                 profile.validation_script.clone().unwrap_or_default();
-            self.begin_release_prepare(path, profile, self.release_prep.backup_before_rebase)
+            self.begin_release_prepare(path, profile)
         } else {
             self.release_prep.phase = ReleasePrepPhase::Preparing;
             self.release_prep.animation_frame = 0;
@@ -216,15 +252,14 @@ impl App {
             .insert(path.clone(), profile.clone());
         let save = self.save_preferences();
         let prepare =
-            self.begin_release_prepare(path, profile, self.release_prep.backup_before_rebase);
+            self.begin_release_prepare(path, profile);
         Task::batch([save, prepare])
     }
 
     fn begin_release_prepare(
         &mut self,
-        path: std::path::PathBuf,
+        _path: std::path::PathBuf,
         profile: ReleaseProfile,
-        backup_before_rebase: bool,
     ) -> Task<Message> {
         self.release_prep.phase = ReleasePrepPhase::Preparing;
         self.release_prep.active_profile = Some(profile.clone());
@@ -235,6 +270,7 @@ impl App {
         self.release_prep.completed_actions.clear();
         self.release_prep.preparing_step = None;
         self.release_prep.completed_preparing_steps.clear();
+        self.release_prep.prepare_acc = PrepareStepOutcome::default();
         self.release_prep.error = None;
         self.release_prep.animation_frame = 0;
         self.operation.loading = true;
@@ -245,10 +281,10 @@ impl App {
             kind: OperationKind::ReleasePrep,
             label: "Running release prepare steps...".to_string(),
         }));
-        start.chain(Task::perform(
-            release_prep::task::prepare(path, profile, backup_before_rebase),
-            |result| Message::from(ReleasePrepMessage::Prepared(Box::new(result))),
-        ))
+        let first_step = Task::done(Message::from(ReleasePrepMessage::PrepareStepStarted(
+            ReleasePrepStep::FetchingRemote,
+        )));
+        start.chain(first_step)
     }
 
     fn finish_release_prepare(
@@ -600,11 +636,11 @@ impl App {
         })
     }
 
-    fn step_failed_event(&self, step: ReleasePrepStep, message: &str) -> Message {
+fn step_failed_event(&self, step: ReleasePrepStep, message: &str) -> Message {
         let Some(id) = self
             .operation_tracker
             .current_id_for(&OperationKind::ReleasePrep)
-        else {
+            else {
             return Message::NoOp;
         };
         Message::Operation(OperationEvent::Completed {
@@ -612,6 +648,165 @@ impl App {
             result: OpResult::Failed(format!("{}: {}", step.label(), message)),
             severity: OpSeverity::Recoverable,
         })
+    }
+
+/// Dispatch a single per-step async task from the `prepare_step_*` set in
+/// `features/release_prep/task.rs`. `CreatingBackup` is gated on
+/// `release_prep.backup_before_rebase`; when disabled, the step is
+/// short-circuited with an empty carrier so the chain records it as
+/// completed without performing any Git work.
+fn dispatch_prepare_step(&self, step: ReleasePrepStep) -> Task<Message> {
+        let Some(path) = self.repo.path.clone() else {
+            return Task::none();
+        };
+        let Some(profile) = self.release_prep.active_profile.clone() else {
+            return Task::none();
+        };
+        let backup_before_rebase = self.release_prep.backup_before_rebase;
+
+        match step {
+            ReleasePrepStep::FetchingRemote => Task::perform(
+                release_prep::task::prepare_step_fetch(path, profile),
+                |result: Result<(), String>| {
+                    Message::from(ReleasePrepMessage::PrepareStepDone {
+                        step: ReleasePrepStep::FetchingRemote,
+                        result: Box::new(result.map(|_| PrepareStepOutcome::default())),
+                    })
+                },
+            ),
+            ReleasePrepStep::SyncingBranches => Task::perform(
+                release_prep::task::prepare_step_sync_branches(path, profile),
+                |result: Result<(), String>| {
+                    Message::from(ReleasePrepMessage::PrepareStepDone {
+                        step: ReleasePrepStep::SyncingBranches,
+                        result: Box::new(result.map(|_| PrepareStepOutcome::default())),
+                    })
+                },
+            ),
+            ReleasePrepStep::CheckingSync => Task::perform(
+                release_prep::task::prepare_step_check_sync(path, profile),
+                |result: Result<naite_core::ReleaseSyncCheck, String>| {
+                    Message::from(ReleasePrepMessage::PrepareStepDone {
+                        step: ReleasePrepStep::CheckingSync,
+                        result: Box::new(result.map(|sc| PrepareStepOutcome {
+                            sync_check: Some(sc),
+                            ..Default::default()
+                        })),
+                    })
+                },
+            ),
+            ReleasePrepStep::CheckingOutSource => Task::perform(
+                release_prep::task::prepare_step_checkout(path, profile),
+                |result: Result<(), String>| {
+                    Message::from(ReleasePrepMessage::PrepareStepDone {
+                        step: ReleasePrepStep::CheckingOutSource,
+                        result: Box::new(result.map(|_| PrepareStepOutcome::default())),
+                    })
+                },
+            ),
+            ReleasePrepStep::CreatingBackup => {
+                if !backup_before_rebase {
+                    return Task::done(Message::from(ReleasePrepMessage::PrepareStepDone {
+                        step: ReleasePrepStep::CreatingBackup,
+                        result: Box::new(Ok(PrepareStepOutcome::default())),
+                    }));
+                }
+                Task::perform(
+                    release_prep::task::prepare_step_backup(path, profile),
+                    |result: Result<Option<String>, String>| {
+                        Message::from(ReleasePrepMessage::PrepareStepDone {
+                            step: ReleasePrepStep::CreatingBackup,
+                            result: Box::new(result.map(|name_opt| PrepareStepOutcome {
+                                backup_branch_name: name_opt,
+                                ..Default::default()
+                            })),
+                        })
+                    },
+                )
+            }
+            ReleasePrepStep::BuildingPlan => Task::perform(
+                release_prep::task::prepare_step_build_plan(path, profile),
+                |result: Result<
+                    (Vec<crate::features::rebase::RebasePlanRow>, Option<String>, repo_open::LoadedRepo),
+                    String,
+                >| {
+                    Message::from(ReleasePrepMessage::PrepareStepDone {
+                        step: ReleasePrepStep::BuildingPlan,
+                        result: Box::new(result.map(
+                            |(plan, author_email, snapshot)| PrepareStepOutcome {
+                                plan_entries: Some(plan),
+                                current_author_email: author_email,
+                                repo_snapshot: Some(snapshot),
+                                ..Default::default()
+                            },
+                        )),
+                    })
+                },
+            ),
+        }
+    }
+
+/// After the chain's last `PrepareStepDone` has merged into `prepare_acc`,
+/// fold the accumulated carrier into a `PrepareOutcome` and feed it to the
+/// existing `finish_release_prepare` path.
+fn finalize_release_prepare_outcome(&mut self) -> Task<Message> {
+        let acc = std::mem::take(&mut self.release_prep.prepare_acc);
+        let Some(sync_check) = acc.sync_check.clone() else {
+            return Task::none();
+        };
+        let Some(repo_snapshot) = acc.repo_snapshot.clone() else {
+            return Task::none();
+        };
+        let Some(profile) = self.release_prep.active_profile.clone() else {
+            return Task::none();
+        };
+        let outcome = release_prep::task::PrepareOutcome {
+            sync_check: sync_check.clone(),
+            backup_branch: acc.backup_branch_name.clone(),
+            current_branch: release_prep::task::branch_ref(
+                &profile.source_branch,
+                true,
+                &sync_check.source,
+            ),
+            target: release_prep::task::branch_ref(
+                &profile.target_branch,
+                false,
+                &sync_check.target,
+            ),
+            current_author_email: acc.current_author_email.clone(),
+            plan: acc.plan_entries.clone().unwrap_or_default(),
+            repo_snapshot,
+        };
+        self.finish_release_prepare(Ok(outcome))
+    }
+}
+
+fn merge_prepare_step_outcome(acc: &mut PrepareStepOutcome, next: PrepareStepOutcome) {
+    if next.sync_check.is_some() {
+        acc.sync_check = next.sync_check;
+    }
+    if next.backup_branch_name.is_some() {
+        acc.backup_branch_name = next.backup_branch_name;
+    }
+    if next.plan_entries.is_some() {
+        acc.plan_entries = next.plan_entries;
+    }
+    if next.current_author_email.is_some() {
+        acc.current_author_email = next.current_author_email;
+    }
+    if next.repo_snapshot.is_some() {
+        acc.repo_snapshot = next.repo_snapshot;
+    }
+}
+
+pub(crate) fn next_release_prep_step(step: ReleasePrepStep) -> Option<ReleasePrepStep> {
+    match step {
+        ReleasePrepStep::FetchingRemote => Some(ReleasePrepStep::SyncingBranches),
+        ReleasePrepStep::SyncingBranches => Some(ReleasePrepStep::CheckingSync),
+        ReleasePrepStep::CheckingSync => Some(ReleasePrepStep::CheckingOutSource),
+        ReleasePrepStep::CheckingOutSource => Some(ReleasePrepStep::CreatingBackup),
+        ReleasePrepStep::CreatingBackup => Some(ReleasePrepStep::BuildingPlan),
+        ReleasePrepStep::BuildingPlan => None,
     }
 }
 

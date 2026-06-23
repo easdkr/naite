@@ -7,15 +7,18 @@ use naite_core::{
 use crate::features::fetch::FetchScope;
 use crate::features::history;
 use crate::features::rebase::{InteractiveRebaseSession, RebaseApplyMode};
+use crate::message::{Message, OperationEvent};
 use crate::state::{
     AvatarCache, BranchCreateBase, BranchCreateState, BranchManageRenameState, CommandPaletteState,
-    CommitFormState, FileInsightState, GitHubIssuesState, HistoryRewordState, OperationId,
-    OperationState, OperationTracker, PreferencesState, PullRequestsState, ReleasePrepState,
-    RepositoryCatalog, RepositoryManagerState, RepositoryState, RepositoryTabsState,
-    SelectionState, SidebarState, StashBranchState, StashCreateState, TagCreateState,
-    TerminalState, UndoCheckpoint, WorkspaceState, WorktreeCreateState,
+    CommitFormState, FileInsightState, GitHubIssuesState, HistoryRewordState, OpResult, OpSeverity,
+    OperationId, OperationKind, OperationState, OperationTracker, PreferencesState,
+    PullRequestsState, ReleasePrepState, RepositoryCatalog, RepositoryManagerState,
+    RepositoryState, RepositoryTabsState, SelectionState, SidebarState, StashBranchState,
+    StashCreateState, TagCreateState, TerminalState, UndoCheckpoint, WorkspaceState,
+    WorktreeCreateState,
 };
 use crate::widgets::Toast;
+use iced::Task;
 
 pub struct App {
     pub(crate) repo: RepositoryState,
@@ -430,6 +433,75 @@ impl App {
             overlay_visible: None,
         }
     }
+
+    pub(crate) fn complete_manual_op(
+        &mut self,
+        kind: &OperationKind,
+        result: Result<(), String>,
+    ) -> Task<Message> {
+        self.complete_manual_op_with_severity(kind, result, OpSeverity::Recoverable)
+    }
+
+    pub(crate) fn complete_manual_op_with_severity(
+        &mut self,
+        kind: &OperationKind,
+        result: Result<(), String>,
+        severity: OpSeverity,
+    ) -> Task<Message> {
+        let Some(id) = self.operation_tracker.current_id_for(kind) else {
+            return Task::none();
+        };
+        let event = match result {
+            Ok(()) => OperationEvent::Completed {
+                id,
+                result: OpResult::Success,
+                severity,
+            },
+            Err(message) => OperationEvent::Completed {
+                id,
+                result: OpResult::Failed(message),
+                severity,
+            },
+        };
+        Task::done(Message::Operation(event))
+    }
+
+    pub(crate) fn start_manual_op(
+        &mut self,
+        kind: OperationKind,
+        label: String,
+    ) -> Task<Message> {
+        Task::done(Message::Operation(OperationEvent::Started {
+            id: self.operation_tracker.next_id(),
+            kind,
+            label,
+        }))
+    }
+
+    /// Emit a synthetic `Started → Completed` pair for a validation gate that
+    /// runs before any task. Used for rebase pre-flight checks that block
+    /// the workflow until the user intervenes.
+    pub(crate) fn fail_validation_op(
+        &mut self,
+        kind: OperationKind,
+        label: String,
+        message: String,
+        severity: OpSeverity,
+    ) -> Task<Message> {
+        let id = self.operation_tracker.next_id();
+        let start = Task::done(Message::Operation(OperationEvent::Started {
+            id,
+            kind,
+            label,
+        }));
+        let complete = Task::done(Message::Operation(OperationEvent::Completed {
+            id,
+            result: OpResult::Failed(message),
+            severity,
+        }));
+        start.chain(complete)
+    }
+
     pub(crate) fn visible_commit_indices(&self) -> Vec<usize> {
         let query = self.search_query.trim().to_lowercase();
         if query.is_empty() {

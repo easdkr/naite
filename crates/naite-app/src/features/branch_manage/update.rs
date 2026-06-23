@@ -4,7 +4,7 @@ use naite_core::{RefKind, RefSummary};
 
 use crate::app::remote_ref_local_branch;
 use crate::features::branch_manage::{self, Message as BranchManageMessage, Operation};
-use crate::state::BranchManageRenameState;
+use crate::state::{BranchManageRenameState, OperationKind};
 use crate::{features::repo_open, App, BranchDeletePrompt, BranchDeleteTarget, Message};
 
 impl App {
@@ -62,6 +62,10 @@ impl App {
                 })
             }
             BranchManageMessage::Done { operation, result } => {
+                let completion = self.complete_manual_op(
+                    &OperationKind::ManualAction("branch_manage"),
+                    result.as_ref().map(|_| ()).map_err(|e| e.clone()),
+                );
                 self.operation.loading = false;
                 match result {
                     Ok(()) => {
@@ -73,17 +77,26 @@ impl App {
                             self.operation.pending_transient_status_after_reload =
                                 Some(status_message);
                             self.operation.loading = true;
-                            Task::perform(repo_open::task::load(path), |result| {
-                                Message::from(repo_open::Message::Loaded(Box::new(result)))
-                            })
+                            let reload_start = self.start_manual_op(
+                                OperationKind::Custom("repo_open".to_string()),
+                                "Reloading repository…".to_string(),
+                            );
+                            completion.chain(
+                                reload_start.chain(Task::perform(
+                                    repo_open::task::load(path),
+                                    |result| {
+                                        Message::from(repo_open::Message::Loaded(Box::new(result)))
+                                    },
+                                )),
+                            )
                         } else {
                             self.set_transient_status(status_message);
-                            Task::none()
+                            completion
                         }
                     }
                     Err(msg) => {
                         self.operation.error = Some(msg);
-                        Task::none()
+                        completion
                     }
                 }
             }
@@ -183,12 +196,17 @@ impl App {
         self.operation.pending_transient_status_after_reload = None;
         self.operation.loading = true;
         let operation_for_message = operation.clone();
-        Task::perform(branch_manage::task::run(path, operation), move |result| {
+        let label = match &operation {
+            Operation::Rename { target, .. } => format!("Renaming {}…", target.short_name),
+            Operation::Delete { .. } => "Deleting branch…".to_string(),
+        };
+        let start = self.start_manual_op(OperationKind::ManualAction("branch_manage"), label);
+        start.chain(Task::perform(branch_manage::task::run(path, operation), move |result| {
             Message::from(BranchManageMessage::Done {
                 operation: operation_for_message.clone(),
                 result,
             })
-        })
+        }))
     }
 
     fn matching_local_branches_for_delete(&self, target: &BranchDeleteTarget) -> Vec<String> {

@@ -3,7 +3,7 @@ use iced::{Alignment, Color, Element, Length, Padding};
 use naite_core::{ReleaseBranchSync, ReleaseProfile};
 
 use crate::features::release_prep::{self, ReleasePrepAction};
-use crate::state::ReleasePrepState;
+use crate::state::{ReleasePrepState, ReleasePrepStep};
 use crate::styles;
 use crate::theme::{self, color};
 use crate::widgets::common::{animated_dots, moving_progress_bar, spinner_frame};
@@ -141,9 +141,12 @@ pub fn release_prep_progress(state: &ReleasePrepState) -> Element<'_, Message> {
         moving_progress_bar(state.animation_frame),
         container(
             column![
-                progress_line("Fetching remote refs"),
-                progress_line("Force syncing source and target branches"),
-                progress_line("Building the rebase plan"),
+                step_progress_row(ReleasePrepStep::FetchingRemote, state),
+                step_progress_row(ReleasePrepStep::SyncingBranches, state),
+                step_progress_row(ReleasePrepStep::CheckingSync, state),
+                step_progress_row(ReleasePrepStep::CheckingOutSource, state),
+                step_progress_row(ReleasePrepStep::CreatingBackup, state),
+                step_progress_row(ReleasePrepStep::BuildingPlan, state),
             ]
             .spacing(theme::SP_SM),
         )
@@ -461,16 +464,49 @@ fn release_prep_complete(state: &ReleasePrepState) -> bool {
         .all(|action| state.completed_actions.contains(action))
 }
 
-fn progress_line<'a>(label: &'a str) -> Element<'a, Message> {
+/// Per-step progress row mirroring the `action_row` glyph convention:
+/// spinner+ACCENT while running, ✓+SUCCESS once done, •+TEXT_SUBTLE pending.
+fn step_progress_row<'a>(
+    step: ReleasePrepStep,
+    state: &'a ReleasePrepState,
+) -> Element<'a, Message> {
+    let is_active = state.preparing_step == Some(step);
+    let is_completed = state.completed_preparing_steps.contains(&step);
+    let frame = state.animation_frame;
+
+    let (status_glyph, status_color) = if is_active {
+        (spinner_frame(frame), color::ACCENT)
+    } else if is_completed {
+        ("✓", color::SUCCESS)
+    } else {
+        ("•", color::TEXT_SUBTLE)
+    };
+
+    let label_text = if is_active {
+        format!("{} — running{}", step.label(), animated_dots(frame))
+    } else if is_completed {
+        format!("{} — done", step.label())
+    } else {
+        step.label().to_string()
+    };
+
+    let label_color = if is_active {
+        color::ACCENT
+    } else if is_completed {
+        color::TEXT_SUBTLE
+    } else {
+        color::TEXT
+    };
+
     row![
-        text("-")
+        text(status_glyph)
             .size(theme::FS_SM)
             .font(iced::Font::MONOSPACE)
-            .color(color::TEXT_SUBTLE),
-        text(label)
+            .color(status_color),
+        text(label_text)
             .size(theme::FS_SM)
             .font(theme::font_regular())
-            .color(color::TEXT_SUBTLE),
+            .color(label_color),
     ]
     .align_y(Alignment::Center)
     .spacing(theme::SP_SM)

@@ -1,6 +1,7 @@
 use iced::Task;
 
 use crate::features::push::{self, Message as PushMessage, PushMode};
+use crate::state::OperationKind;
 use crate::{features::repo_open, App, Message};
 
 impl App {
@@ -31,6 +32,10 @@ impl App {
                 Task::none()
             }
             PushMessage::Done { mode, result } => {
+                let completion = self.complete_manual_op(
+                    &OperationKind::ManualAction("push"),
+                    result.as_ref().map(|_| ()).map_err(|e| e.clone()),
+                );
                 self.operation.loading = false;
                 self.selection.force_push_confirmation = None;
                 match result {
@@ -40,18 +45,27 @@ impl App {
                             self.operation.pending_transient_status_after_reload =
                                 Some(status_message);
                             self.operation.loading = true;
-                            Task::perform(repo_open::task::load(path), |result| {
-                                Message::from(repo_open::Message::Loaded(Box::new(result)))
-                            })
+                            let reload_start = self.start_manual_op(
+                                OperationKind::Custom("repo_open".to_string()),
+                                "Reloading repository…".to_string(),
+                            );
+                            completion.chain(
+                                reload_start.chain(Task::perform(
+                                    repo_open::task::load(path),
+                                    |result| {
+                                        Message::from(repo_open::Message::Loaded(Box::new(result)))
+                                    },
+                                )),
+                            )
                         } else {
                             self.set_transient_status(status_message);
-                            Task::none()
+                            completion
                         }
                     }
                     Err(msg) => {
                         self.operation.pending_transient_status_after_reload = None;
                         self.operation.error = Some(msg);
-                        Task::none()
+                        completion
                     }
                 }
             }
@@ -78,8 +92,12 @@ impl App {
         self.operation.transient_status = None;
         self.operation.pending_transient_status_after_reload = None;
         self.operation.loading = true;
-        Task::perform(push::task::run(path, mode), move |result| {
+        let start = self.start_manual_op(
+            OperationKind::ManualAction("push"),
+            "Pushing current branch…".to_string(),
+        );
+        start.chain(Task::perform(push::task::run(path, mode), move |result| {
             Message::from(PushMessage::Done { mode, result })
-        })
+        }))
     }
 }

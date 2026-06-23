@@ -14,6 +14,7 @@ use naite_core::{
 use crate::{
     features::rebase::RebasePlanRow,
     features::release_prep::ReleasePrepAction,
+    features::repo_open::LoadedRepo,
     features::terminal::{TerminalSessionId, TerminalTarget},
     theme::OP_HISTORY_CAP,
     BranchDeletePrompt, CheckoutPrompt, DiscardPrompt, ForcePushPrompt, ForceSyncPrompt,
@@ -532,7 +533,7 @@ impl Default for PreferencesState {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default)]
 pub struct ReleasePrepState {
     pub phase: ReleasePrepPhase,
     pub remote: String,
@@ -554,6 +555,12 @@ pub struct ReleasePrepState {
     pub completed_actions: Vec<ReleasePrepAction>,
     pub preparing_step: Option<ReleasePrepStep>,
     pub completed_preparing_steps: Vec<ReleasePrepStep>,
+    /// Accumulator that the per-step chain in
+    /// `features/release_prep/update.rs` merges each step's contribution
+    /// into. Reset to `Default::default()` at `begin_release_prepare`; once
+    /// all 6 user-visible steps have completed, the accumulated value is
+    /// folded into the final `PrepareOutcome`.
+    pub prepare_acc: PrepareStepOutcome,
 }
 
 /// Ordered phases the release-prep prepare pipeline can be in.
@@ -605,6 +612,8 @@ pub struct PrepareStepOutcome {
     pub sync_check: Option<ReleaseSyncCheck>,
     pub backup_branch_name: Option<String>,
     pub plan_entries: Option<Vec<RebasePlanRow>>,
+    pub current_author_email: Option<String>,
+    pub repo_snapshot: Option<LoadedRepo>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

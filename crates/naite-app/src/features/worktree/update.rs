@@ -5,6 +5,7 @@ use iced::Task;
 use naite_core::{WorktreeAdd, WorktreeSummary};
 
 use crate::features::{repo_open, worktree};
+use crate::state::OperationKind;
 use crate::{App, Message, WorktreeRemovePrompt};
 
 impl App {
@@ -76,15 +77,27 @@ impl App {
             }
             worktree::Message::RemoveConfirmed => self.start_worktree_remove(),
             worktree::Message::RemoveDone(result) => {
-                self.finish_worktree_mutation(result, "Removed worktree".into())
+                self.finish_worktree_mutation(
+                    &OperationKind::ManualAction("worktree_remove"),
+                    result,
+                    "Removed worktree".into(),
+                )
             }
             worktree::Message::LockRequested(target) => self.start_worktree_lock(target),
             worktree::Message::LockDone(result) => {
-                self.finish_worktree_mutation(result, "Locked worktree".into())
+                self.finish_worktree_mutation(
+                    &OperationKind::ManualAction("worktree_lock"),
+                    result,
+                    "Locked worktree".into(),
+                )
             }
             worktree::Message::UnlockRequested(target) => self.start_worktree_unlock(target),
             worktree::Message::UnlockDone(result) => {
-                self.finish_worktree_mutation(result, "Unlocked worktree".into())
+                self.finish_worktree_mutation(
+                    &OperationKind::ManualAction("worktree_unlock"),
+                    result,
+                    "Unlocked worktree".into(),
+                )
             }
         }
     }
@@ -126,22 +139,28 @@ impl App {
         };
         self.operation.loading = true;
         self.operation.error = None;
-        Task::perform(worktree::task::add(repo_path, add), |result| {
+        let label = format!("Creating worktree at {}…", path);
+        let start = self.start_manual_op(OperationKind::ManualAction("worktree_create"), label);
+        start.chain(Task::perform(worktree::task::add(repo_path, add), |result| {
             Message::from(worktree::Message::CreateDone(result))
-        })
+        }))
     }
 
     fn finish_worktree_create(&mut self, result: Result<PathBuf, String>) -> Task<Message> {
+        let completion = self.complete_manual_op(
+            &OperationKind::ManualAction("worktree_create"),
+            result.as_ref().map(|_| ()).map_err(|e| e.clone()),
+        );
         self.operation.loading = false;
         match result {
             Ok(path) => {
                 self.worktree_create.open = false;
                 self.set_transient_status(format!("Created worktree at {}", path.display()));
-                self.reload_current_repo()
+                completion.chain(self.reload_current_repo())
             }
             Err(msg) => {
                 self.operation.error = Some(msg);
-                Task::none()
+                completion
             }
         }
     }
@@ -159,7 +178,11 @@ impl App {
 
         self.operation.loading = true;
         self.operation.error = None;
-        Task::perform(
+        let start = self.start_manual_op(
+            OperationKind::ManualAction("worktree_remove"),
+            "Removing worktree…".to_string(),
+        );
+        start.chain(Task::perform(
             worktree::task::remove(
                 repo_path,
                 prompt.target.path,
@@ -167,7 +190,7 @@ impl App {
                 prompt.force,
             ),
             |result| Message::from(worktree::Message::RemoveDone(result)),
-        )
+        ))
     }
 
     fn start_worktree_lock(&mut self, target: WorktreeSummary) -> Task<Message> {
@@ -180,10 +203,14 @@ impl App {
 
         self.operation.loading = true;
         self.operation.error = None;
-        Task::perform(
+        let start = self.start_manual_op(
+            OperationKind::ManualAction("worktree_lock"),
+            "Locking worktree…".to_string(),
+        );
+        start.chain(Task::perform(
             worktree::task::lock(repo_path, target.path, "Locked by naite".into()),
             |result| Message::from(worktree::Message::LockDone(result)),
-        )
+        ))
     }
 
     fn start_worktree_unlock(&mut self, target: WorktreeSummary) -> Task<Message> {
@@ -196,26 +223,35 @@ impl App {
 
         self.operation.loading = true;
         self.operation.error = None;
-        Task::perform(worktree::task::unlock(repo_path, target.path), |result| {
+        let start = self.start_manual_op(
+            OperationKind::ManualAction("worktree_unlock"),
+            "Unlocking worktree…".to_string(),
+        );
+        start.chain(Task::perform(worktree::task::unlock(repo_path, target.path), |result| {
             Message::from(worktree::Message::UnlockDone(result))
-        })
+        }))
     }
 
     fn finish_worktree_mutation(
         &mut self,
+        kind: &OperationKind,
         result: Result<(), String>,
         success_message: String,
     ) -> Task<Message> {
+        let completion = self.complete_manual_op(
+            kind,
+            result.as_ref().map(|_| ()).map_err(|e| e.clone()),
+        );
         self.operation.loading = false;
         self.selection.worktree_remove_confirmation = None;
         match result {
             Ok(()) => {
                 self.set_transient_status(success_message);
-                self.reload_current_repo()
+                completion.chain(self.reload_current_repo())
             }
             Err(msg) => {
                 self.operation.error = Some(msg);
-                Task::none()
+                completion
             }
         }
     }
@@ -225,9 +261,13 @@ impl App {
             return Task::none();
         };
         self.operation.loading = true;
-        Task::perform(repo_open::task::load(path), |result| {
+        let reload_start = self.start_manual_op(
+            OperationKind::Custom("repo_open_reload".to_string()),
+            "Reloading repository…".to_string(),
+        );
+        reload_start.chain(Task::perform(repo_open::task::load(path), |result| {
             Message::from(repo_open::Message::Loaded(Box::new(result)))
-        })
+        }))
     }
 }
 

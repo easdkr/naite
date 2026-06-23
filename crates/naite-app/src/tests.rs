@@ -9179,6 +9179,163 @@ mod release_prep_prepare_baseline {
         );
     }
 }
+
+// release_prep_step_chain — pins the invariants of the 6-step pipeline
+// added by Task 21: enum order, success transitions, and failure stops.
+mod release_prep_step_chain {
+    use std::path::PathBuf;
+
+    use naite_core::ReleaseProfile;
+
+    use crate::features::release_prep::{self, Message as ReleasePrepMessage};
+    use crate::state::{
+        PrepareStepOutcome, ReleasePrepPhase, ReleasePrepState, ReleasePrepStep, RepositoryState,
+    };
+    use crate::{App, Message};
+
+    fn chain_test_app(current_step: ReleasePrepStep) -> App {
+        App {
+            repo: RepositoryState {
+                path: Some(PathBuf::from("/tmp/naite-release-prep-chain")),
+                ..Default::default()
+            },
+            release_prep: ReleasePrepState {
+                phase: ReleasePrepPhase::Preparing,
+                active_profile: Some(ReleaseProfile {
+                    remote: "origin".into(),
+                    source_branch: "staging".into(),
+                    target_branch: "main".into(),
+                    validation_script: None,
+                }),
+                preparing_step: Some(current_step),
+                backup_before_rebase: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn step_chain_indices_match_display_order_fetch_to_building_plan() {
+        assert_eq!(ReleasePrepStep::FetchingRemote.index(), 1);
+        assert_eq!(ReleasePrepStep::SyncingBranches.index(), 2);
+        assert_eq!(ReleasePrepStep::CheckingSync.index(), 3);
+        assert_eq!(ReleasePrepStep::CheckingOutSource.index(), 4);
+        assert_eq!(ReleasePrepStep::CreatingBackup.index(), 5);
+        assert_eq!(ReleasePrepStep::BuildingPlan.index(), 6);
+        assert_eq!(ReleasePrepStep::TOTAL, 6);
+    }
+
+    #[test]
+    fn step_done_success_pushes_completed_and_clears_preparing() {
+        let mut app = chain_test_app(ReleasePrepStep::SyncingBranches);
+
+        let _ = app.update(Message::from(ReleasePrepMessage::PrepareStepDone {
+            step: ReleasePrepStep::SyncingBranches,
+            result: Box::new(Ok(PrepareStepOutcome::default())),
+        }));
+
+        assert!(
+            app.release_prep.preparing_step.is_none(),
+            "preparing_step should be cleared after a successful step"
+        );
+        assert!(app
+            .release_prep
+            .completed_preparing_steps
+            .contains(&ReleasePrepStep::SyncingBranches));
+        assert_eq!(
+            app.release_prep.phase,
+            ReleasePrepPhase::Preparing,
+            "successful step keeps the chain in Preparing phase"
+        );
+        assert!(
+            app.release_prep.error.is_none(),
+            "successful step should not set error"
+        );
+    }
+
+    #[test]
+    fn step_done_at_checking_sync_failure_stops_chain_and_sets_error() {
+        let mut app = chain_test_app(ReleasePrepStep::CheckingSync);
+
+        let _ = app.update(Message::from(ReleasePrepMessage::PrepareStepDone {
+            step: ReleasePrepStep::CheckingSync,
+            result: Box::new(Err("Release branches still differ".into())),
+        }));
+
+        assert_eq!(
+            app.release_prep.phase,
+            ReleasePrepPhase::Configuring,
+            "chain failure should flip the phase back to Configuring"
+        );
+        assert_eq!(
+            app.release_prep.error.as_deref(),
+            Some("Release branches still differ"),
+            "the failing step's error should be surfaced verbatim"
+        );
+        assert!(
+            app.release_prep.preparing_step.is_none(),
+            "preparing_step should be cleared after a failed step"
+        );
+        assert!(
+            app.release_prep
+                .completed_preparing_steps
+                .contains(&ReleasePrepStep::CheckingSync),
+            "the failing step should still be appended to completed_preparing_steps"
+        );
+        assert!(
+            !app.release_prep
+                .completed_preparing_steps
+                .contains(&ReleasePrepStep::CheckingOutSource),
+            "no later step should have run after the failure"
+        );
+    }
+
+    #[test]
+    fn step_started_sets_preparing_and_marks_running_step() {
+        let mut app = chain_test_app(ReleasePrepStep::FetchingRemote);
+        app.release_prep.preparing_step = None;
+        app.release_prep.completed_preparing_steps.clear();
+
+        let _ = app.update(Message::from(ReleasePrepMessage::PrepareStepStarted(
+            ReleasePrepStep::SyncingBranches,
+        )));
+
+        assert_eq!(
+            app.release_prep.preparing_step,
+            Some(ReleasePrepStep::SyncingBranches),
+            "PrepareStepStarted should mark the new step as preparing"
+        );
+    }
+
+    #[test]
+    fn release_prep_next_step_walks_chain_in_order() {
+        let order = [
+            ReleasePrepStep::FetchingRemote,
+            ReleasePrepStep::SyncingBranches,
+            ReleasePrepStep::CheckingSync,
+            ReleasePrepStep::CheckingOutSource,
+            ReleasePrepStep::CreatingBackup,
+            ReleasePrepStep::BuildingPlan,
+        ];
+        for window in order.windows(2) {
+            let next = release_prep::update::next_release_prep_step(window[0]);
+            assert_eq!(
+                next,
+                Some(window[1]),
+                "expected {:?} -> {:?}, got {:?}",
+                window[0],
+                window[1],
+                next
+            );
+        }
+        assert_eq!(
+            release_prep::update::next_release_prep_step(ReleasePrepStep::BuildingPlan),
+            None,
+            "BuildingPlan is the terminal step"
+        );
+    }
+}
 // --- Task 5: OperationTracker state model ---
 
 #[test]

@@ -3,6 +3,7 @@ use naite_core::{CommitSummary, ResetMode};
 
 use crate::features::repo_open;
 use crate::features::reset::{self, Message as ResetMessage};
+use crate::state::OperationKind;
 use crate::{App, Message, ResetPrompt};
 
 impl App {
@@ -49,7 +50,9 @@ impl App {
         self.operation.loading = true;
         let commit = prompt.target;
         let commit_for_message = commit.clone();
-        Task::perform(
+        let label = format!("Resetting to {}…", commit.short_id);
+        let start = self.start_manual_op(OperationKind::ManualAction("reset"), label);
+        start.chain(Task::perform(
             reset::task::run(path, commit.id.clone(), mode),
             move |result| {
                 Message::from(ResetMessage::Done {
@@ -58,7 +61,7 @@ impl App {
                     result,
                 })
             },
-        )
+        ))
     }
 
     fn finish_reset(
@@ -67,6 +70,10 @@ impl App {
         mode: ResetMode,
         result: Result<(), String>,
     ) -> Task<Message> {
+        let completion = self.complete_manual_op(
+            &OperationKind::ManualAction("reset"),
+            result.as_ref().map(|_| ()).map_err(|e| e.clone()),
+        );
         self.operation.loading = false;
         match result {
             Ok(()) => {
@@ -79,17 +86,23 @@ impl App {
                 if let Some(path) = self.repo.path.clone() {
                     self.operation.pending_transient_status_after_reload = Some(status_message);
                     self.operation.loading = true;
-                    Task::perform(repo_open::task::load(path), |result| {
-                        Message::from(repo_open::Message::Loaded(Box::new(result)))
-                    })
+                    let reload_start = self.start_manual_op(
+                        OperationKind::Custom("repo_open".to_string()),
+                        "Reloading repository…".to_string(),
+                    );
+                    completion.chain(
+                        reload_start.chain(Task::perform(repo_open::task::load(path), |result| {
+                            Message::from(repo_open::Message::Loaded(Box::new(result)))
+                        })),
+                    )
                 } else {
                     self.set_transient_status(status_message);
-                    Task::none()
+                    completion
                 }
             }
             Err(msg) => {
                 self.operation.error = Some(msg);
-                Task::none()
+                completion
             }
         }
     }
