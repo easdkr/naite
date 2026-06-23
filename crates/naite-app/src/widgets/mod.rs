@@ -27,9 +27,7 @@ mod workspace;
 
 pub use command_palette::command_palette_overlay;
 pub use commit_list::{commit_list, CommitListProps};
-pub use common::{
-    animated_dots, ease_in_out_sine, moving_progress_bar, spinner_frame, ErrorRecovery,
-};
+pub use common::ErrorRecovery;
 pub use context_menu::floating_context_menu;
 pub use detail_pane::{detail_pane, DetailPaneProps};
 pub use forms::{
@@ -58,7 +56,7 @@ pub use terminal::{
     panel_chrome, terminal_panel, TERMINAL_CHAR_WIDTH, TERMINAL_LINE_HEIGHT, TERMINAL_PANEL_HEIGHT,
     TERMINAL_PANEL_HEIGHT_MINIMIZED,
 };
-pub use toast::{toast_layer, Toast, ToastSeverity, MAX_VISIBLE as MAX_TOASTS_VISIBLE};
+pub use toast::{toast_layer, Toast};
 pub use toolbar::{toolbar, ToolbarProps};
 pub use workspace::workspace_dashboard;
 

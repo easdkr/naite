@@ -1,9 +1,7 @@
 use iced::Task;
 use naite_core::ReleaseProfile;
 
-use crate::features::release_prep::{
-    self, Message as ReleasePrepMessage, ReleasePrepAction,
-};
+use crate::features::release_prep::{self, Message as ReleasePrepMessage, ReleasePrepAction};
 use crate::features::repo_open;
 use crate::message::OperationEvent;
 use crate::state::{
@@ -75,10 +73,7 @@ impl App {
                 self.release_prep.preparing_step = None;
                 match *result {
                     Ok(outcome) => {
-                        merge_prepare_step_outcome(
-                            &mut self.release_prep.prepare_acc,
-                            outcome,
-                        );
+                        merge_prepare_step_outcome(&mut self.release_prep.prepare_acc, outcome);
                         let progress = Task::done(self.step_progressed_event(step));
                         match next_release_prep_step(step) {
                             Some(next_step) => {
@@ -94,8 +89,7 @@ impl App {
                         self.release_prep.phase = ReleasePrepPhase::Configuring;
                         self.release_prep.error = Some(message.clone());
                         let step_failed = Task::done(self.step_failed_event(step, &message));
-                        let completion =
-                            self.complete_release_prep_op(&Err(message.clone()));
+                        let completion = self.complete_release_prep_op(&Err(message.clone()));
                         let reload = if let Some(path) = self.repo.path.clone() {
                             self.operation.loading = true;
                             Task::perform(repo_open::task::load(path), |result| {
@@ -251,8 +245,7 @@ impl App {
             .release_profiles
             .insert(path.clone(), profile.clone());
         let save = self.save_preferences();
-        let prepare =
-            self.begin_release_prepare(path, profile);
+        let prepare = self.begin_release_prepare(path, profile);
         Task::batch([save, prepare])
     }
 
@@ -636,11 +629,11 @@ impl App {
         })
     }
 
-fn step_failed_event(&self, step: ReleasePrepStep, message: &str) -> Message {
+    fn step_failed_event(&self, step: ReleasePrepStep, message: &str) -> Message {
         let Some(id) = self
             .operation_tracker
             .current_id_for(&OperationKind::ReleasePrep)
-            else {
+        else {
             return Message::NoOp;
         };
         Message::Operation(OperationEvent::Completed {
@@ -650,12 +643,12 @@ fn step_failed_event(&self, step: ReleasePrepStep, message: &str) -> Message {
         })
     }
 
-/// Dispatch a single per-step async task from the `prepare_step_*` set in
-/// `features/release_prep/task.rs`. `CreatingBackup` is gated on
-/// `release_prep.backup_before_rebase`; when disabled, the step is
-/// short-circuited with an empty carrier so the chain records it as
-/// completed without performing any Git work.
-fn dispatch_prepare_step(&self, step: ReleasePrepStep) -> Task<Message> {
+    /// Dispatch a single per-step async task from the `prepare_step_*` set in
+    /// `features/release_prep/task.rs`. `CreatingBackup` is gated on
+    /// `release_prep.backup_before_rebase`; when disabled, the step is
+    /// short-circuited with an empty carrier so the chain records it as
+    /// completed without performing any Git work.
+    fn dispatch_prepare_step(&self, step: ReleasePrepStep) -> Task<Message> {
         let Some(path) = self.repo.path.clone() else {
             return Task::none();
         };
@@ -727,29 +720,33 @@ fn dispatch_prepare_step(&self, step: ReleasePrepStep) -> Task<Message> {
             ReleasePrepStep::BuildingPlan => Task::perform(
                 release_prep::task::prepare_step_build_plan(path, profile),
                 |result: Result<
-                    (Vec<crate::features::rebase::RebasePlanRow>, Option<String>, repo_open::LoadedRepo),
+                    (
+                        Vec<crate::features::rebase::RebasePlanRow>,
+                        Option<String>,
+                        repo_open::LoadedRepo,
+                    ),
                     String,
                 >| {
                     Message::from(ReleasePrepMessage::PrepareStepDone {
                         step: ReleasePrepStep::BuildingPlan,
-                        result: Box::new(result.map(
-                            |(plan, author_email, snapshot)| PrepareStepOutcome {
+                        result: Box::new(result.map(|(plan, author_email, snapshot)| {
+                            PrepareStepOutcome {
                                 plan_entries: Some(plan),
                                 current_author_email: author_email,
                                 repo_snapshot: Some(snapshot),
                                 ..Default::default()
-                            },
-                        )),
+                            }
+                        })),
                     })
                 },
             ),
         }
     }
 
-/// After the chain's last `PrepareStepDone` has merged into `prepare_acc`,
-/// fold the accumulated carrier into a `PrepareOutcome` and feed it to the
-/// existing `finish_release_prepare` path.
-fn finalize_release_prepare_outcome(&mut self) -> Task<Message> {
+    /// After the chain's last `PrepareStepDone` has merged into `prepare_acc`,
+    /// fold the accumulated carrier into a `PrepareOutcome` and feed it to the
+    /// existing `finish_release_prepare` path.
+    fn finalize_release_prepare_outcome(&mut self) -> Task<Message> {
         let acc = std::mem::take(&mut self.release_prep.prepare_acc);
         let Some(sync_check) = acc.sync_check.clone() else {
             return Task::none();

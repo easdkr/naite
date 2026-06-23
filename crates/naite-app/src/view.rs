@@ -453,10 +453,12 @@ impl App {
         // tick and render) silently resolves to None rather than
         // dereferencing a freed reference.
         layered = layered.push(widgets::toast_layer(&self.toasts));
-        if let Some(op) = self
-            .overlay_visible
-            .and_then(|id| self.operation_tracker.active().iter().find(|op| op.id == id))
-        {
+        if let Some(op) = self.overlay_visible.and_then(|id| {
+            self.operation_tracker
+                .active()
+                .iter()
+                .find(|op| op.id == id)
+        }) {
             layered = layered.push(widgets::progress_overlay(op, self.status_animation_frame));
         }
         layered.into()

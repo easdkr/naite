@@ -244,6 +244,7 @@ impl OperationTracker {
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn start(&mut self, kind: OperationKind, label: impl Into<String>) -> OperationId {
         self.next_id = self.next_id.wrapping_add(1);
         let id = self.next_id;
@@ -347,6 +348,7 @@ impl OperationTracker {
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn fail(
         &mut self,
         id: OperationId,
@@ -395,6 +397,7 @@ impl OperationTracker {
         &self.history.as_slices().0[start..]
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn active_long_running(&self, threshold_secs: u64) -> Option<&ActiveOperation> {
         let threshold = Duration::from_secs(threshold_secs);

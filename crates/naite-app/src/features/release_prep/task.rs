@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use naite_core::{
     HistoryCommit, RebaseAction, RefKind, RefSummary, ReleaseProfile, ReleaseSyncCheck, Repository,
@@ -31,6 +31,11 @@ pub(crate) async fn load_suggestion(
     .map_err(|e| format!("worker join error: {e}"))?
 }
 
+/// `prepare()` is the monolithic pre-Wave-5 entry point. After Wave 5's
+/// per-step split, the user-facing pipeline no longer calls it directly,
+/// but it is retained and exercised by the `release_prep_prepare_baseline_*`
+/// regression tests in `tests.rs` so the original semantics remain locked in.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) async fn prepare(
     path: PathBuf,
     profile: ReleaseProfile,
@@ -62,9 +67,11 @@ pub(crate) async fn prepare(
 
 /// Preflight guard (busy operation + dirty worktree). Not a user-visible
 /// `ReleasePrepStep`; surfaced via `complete_release_prep_op` rather than
-/// `PrepareStepDone { .. Err .. }`.
-async fn preflight(path: &PathBuf) -> Result<(), String> {
-    let path = path.clone();
+/// `PrepareStepDone { .. Err .. }`. Only invoked from `prepare()` above;
+/// keep the attribute in sync with `prepare`'s `cfg_attr(not(test), ..)`.
+#[cfg_attr(not(test), allow(dead_code))]
+async fn preflight(path: &Path) -> Result<(), String> {
+    let path = path.to_path_buf();
     tokio::task::spawn_blocking(move || -> Result<(), String> {
         let repo = Repository::open(&path).map_err(|e| e.to_string())?;
         if repo.operation_state().is_busy() {

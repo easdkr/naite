@@ -32,7 +32,13 @@ pub const MAX_VISIBLE: usize = 3;
 /// and this enum only carries the color cue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToastSeverity {
+    /// Both variants are only constructed from `Toast::success` /
+    /// `Toast::failure`, which are themselves only consumed from
+    /// `tests.rs`. Without this attribute, the bin target sees them as
+    /// never-constructed.
+    #[allow(dead_code)]
     Success,
+    #[allow(dead_code)]
     Failure,
 }
 
@@ -50,6 +56,7 @@ pub struct Toast {
 }
 
 impl Toast {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn success(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -58,6 +65,7 @@ impl Toast {
         }
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn failure(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),

@@ -138,7 +138,7 @@ pub fn bottom_status_bar<'a>(tracker: &'a OperationTracker) -> Element<'a, Messa
 }
 
 /// Newest-first, Fatal-filtered view of the tracker's recent history.
-fn visible_recent<'a>(recent: &'a [CompletedOperation]) -> Vec<&'a CompletedOperation> {
+fn visible_recent(recent: &[CompletedOperation]) -> Vec<&CompletedOperation> {
     recent.iter().rev().filter(|op| !is_fatal(op)).collect()
 }
 
