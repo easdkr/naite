@@ -325,6 +325,7 @@ impl App {
                 {
                     self.operation.transient_status = None;
                 }
+                self.status_animation_frame = self.status_animation_frame.wrapping_add(1);
                 // Reuse this 250ms tick for toast TTL bookkeeping so the
                 // subscription list stays small. Failure toasts are filtered
                 // out by `is_expired` because they never auto-dismiss.
