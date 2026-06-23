@@ -8,6 +8,8 @@ use naite_core::{
 };
 
 use crate::features::pull_request;
+use crate::message::OperationEvent;
+use crate::state::{OpResult, OpSeverity, OperationKind};
 use crate::{App, Message};
 
 impl App {
@@ -89,17 +91,37 @@ impl App {
             }
             pull_request::Message::CreateSubmitted => self.start_pull_request_create(),
             pull_request::Message::CreateDone(result) => {
+                let kind = OperationKind::ManualAction("pull_request_create");
+                let completion = match self.operation_tracker.current_id_for(&kind) {
+                    Some(id) => {
+                        let event = match &result {
+                            Ok(url) => {
+                                self.pull_requests.create.open = false;
+                                self.set_transient_status(format!("Created pull request: {url}"));
+                                OperationEvent::Completed {
+                                    id,
+                                    result: OpResult::Success,
+                                    severity: OpSeverity::Recoverable,
+                                }
+                            }
+                            Err(message) => {
+                                self.operation.error = Some(message.clone());
+                                OperationEvent::Completed {
+                                    id,
+                                    result: OpResult::Failed(message.clone()),
+                                    severity: OpSeverity::Recoverable,
+                                }
+                            }
+                        };
+                        Task::done(Message::Operation(event))
+                    }
+                    None => Task::none(),
+                };
                 self.operation.loading = false;
-                match result {
-                    Ok(url) => {
-                        self.pull_requests.create.open = false;
-                        self.set_transient_status(format!("Created pull request: {url}"));
-                        self.refresh_pull_requests()
-                    }
-                    Err(msg) => {
-                        self.operation.error = Some(msg);
-                        Task::none()
-                    }
+                if result.is_ok() {
+                    completion.chain(self.refresh_pull_requests())
+                } else {
+                    completion
                 }
             }
             pull_request::Message::CheckoutRequested(pull_request) => {
@@ -128,6 +150,29 @@ impl App {
                 worktree_path,
                 result,
             } => {
+                let kind = OperationKind::ManualAction(if worktree_path.is_some() {
+                    "pull_request_worktree_checkout"
+                } else {
+                    "pull_request_checkout"
+                });
+                let completion = match self.operation_tracker.current_id_for(&kind) {
+                    Some(id) => {
+                        let event = match &result {
+                            Ok(()) => OperationEvent::Completed {
+                                id,
+                                result: OpResult::Success,
+                                severity: OpSeverity::Recoverable,
+                            },
+                            Err(message) => OperationEvent::Completed {
+                                id,
+                                result: OpResult::Failed(message.clone()),
+                                severity: OpSeverity::Recoverable,
+                            },
+                        };
+                        Task::done(Message::Operation(event))
+                    }
+                    None => Task::none(),
+                };
                 self.operation.loading = false;
                 match result {
                     Ok(()) => {
@@ -139,27 +184,54 @@ impl App {
                                 }
                                 None => format!("Checked out pull request #{number}"),
                             });
-                        self.reload_current_repo()
+                        completion.chain(self.reload_current_repo())
                     }
                     Err(msg) => {
                         self.operation.error = Some(msg);
-                        Task::none()
+                        completion
                     }
                 }
             }
             pull_request::Message::OpenInBrowserRequested(pull_request) => {
                 self.start_pull_request_open(pull_request)
             }
-            pull_request::Message::OpenInBrowserDone { number, result } => match result {
-                Ok(()) => {
-                    self.set_transient_status(format!("Opened pull request #{number} in browser"));
-                    Task::none()
+            pull_request::Message::OpenInBrowserDone { number, result } => {
+                let kind = OperationKind::ManualAction("pull_request_open_browser");
+                match result {
+                    Ok(()) => {
+                        let id = self.operation_tracker.next_id();
+                        self.set_transient_status(format!(
+                            "Opened pull request #{number} in browser"
+                        ));
+                        let start = Task::done(Message::Operation(OperationEvent::Started {
+                            id,
+                            kind: kind.clone(),
+                            label: format!("Opening pull request #{number} in browser"),
+                        }));
+                        let complete = Task::done(Message::Operation(OperationEvent::Completed {
+                            id,
+                            result: OpResult::Success,
+                            severity: OpSeverity::Recoverable,
+                        }));
+                        start.chain(complete)
+                    }
+                    Err(msg) => {
+                        let id = self.operation_tracker.next_id();
+                        self.operation.error = Some(msg.clone());
+                        let start = Task::done(Message::Operation(OperationEvent::Started {
+                            id,
+                            kind,
+                            label: format!("Opening pull request #{number} in browser"),
+                        }));
+                        let complete = Task::done(Message::Operation(OperationEvent::Completed {
+                            id,
+                            result: OpResult::Failed(msg),
+                            severity: OpSeverity::Recoverable,
+                        }));
+                        start.chain(complete)
+                    }
                 }
-                Err(msg) => {
-                    self.operation.error = Some(msg);
-                    Task::none()
-                }
-            },
+            }
         }
     }
 
@@ -235,9 +307,15 @@ impl App {
         };
         self.operation.loading = true;
         self.operation.error = None;
-        Task::perform(pull_request::task::create(path, options), |result| {
-            Message::from(pull_request::Message::CreateDone(result))
-        })
+        let start = Task::done(Message::Operation(OperationEvent::Started {
+            id: self.operation_tracker.next_id(),
+            kind: OperationKind::ManualAction("pull_request_create"),
+            label: "Creating pull request…".to_string(),
+        }));
+        start.chain(Task::perform(
+            pull_request::task::create(path, options),
+            |result| Message::from(pull_request::Message::CreateDone(result)),
+        ))
     }
 
     fn start_pull_request_checkout(&mut self, pull_request: PullRequestSummary) -> Task<Message> {
@@ -251,7 +329,12 @@ impl App {
         let number = pull_request.number;
         self.operation.loading = true;
         self.operation.error = None;
-        Task::perform(
+        let start = Task::done(Message::Operation(OperationEvent::Started {
+            id: self.operation_tracker.next_id(),
+            kind: OperationKind::ManualAction("pull_request_checkout"),
+            label: format!("Checking out pull request #{number}…"),
+        }));
+        start.chain(Task::perform(
             pull_request::task::checkout(path, number, CheckoutPullRequestOptions::default()),
             move |result| {
                 Message::from(pull_request::Message::CheckoutDone {
@@ -260,7 +343,7 @@ impl App {
                     result,
                 })
             },
-        )
+        ))
     }
 
     fn open_pull_request_worktree_checkout(
@@ -303,8 +386,20 @@ impl App {
 
         let worktree_path = self.pull_requests.checkout_worktree.path.trim();
         if worktree_path.is_empty() {
-            self.operation.error = Some("Enter a worktree path.".into());
-            return Task::none();
+            let msg = "Enter a worktree path.".to_string();
+            let id = self.operation_tracker.next_id();
+            self.operation.error = Some(msg.clone());
+            let start = Task::done(Message::Operation(OperationEvent::Started {
+                id,
+                kind: OperationKind::ManualAction("pull_request_worktree_checkout"),
+                label: "Validating worktree path…".to_string(),
+            }));
+            let complete = Task::done(Message::Operation(OperationEvent::Completed {
+                id,
+                result: OpResult::Failed(msg),
+                severity: OpSeverity::Recoverable,
+            }));
+            return start.chain(complete);
         }
 
         let branch_name = self.pull_requests.checkout_worktree.branch_name.trim();
@@ -316,7 +411,12 @@ impl App {
         let worktree_path = worktree_path.to_string();
         self.operation.loading = true;
         self.operation.error = None;
-        Task::perform(
+        let start = Task::done(Message::Operation(OperationEvent::Started {
+            id: self.operation_tracker.next_id(),
+            kind: OperationKind::ManualAction("pull_request_worktree_checkout"),
+            label: format!("Checking out pull request #{number} into worktree…"),
+        }));
+        start.chain(Task::perform(
             pull_request::task::checkout(path, number, options),
             move |result| {
                 Message::from(pull_request::Message::CheckoutDone {
@@ -325,7 +425,7 @@ impl App {
                     result,
                 })
             },
-        )
+        ))
     }
 
     fn start_pull_request_open(&mut self, pull_request: PullRequestSummary) -> Task<Message> {

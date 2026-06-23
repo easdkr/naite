@@ -2,7 +2,8 @@ use iced::widget::text_input;
 use iced::Task;
 
 use crate::features::stash::{self, Message as StashMessage, Operation};
-use crate::state::{OperationKind, StashBranchState, StashCreateState};
+use crate::message::OperationEvent;
+use crate::state::{OpResult, OpSeverity, OperationKind, StashBranchState, StashCreateState};
 use crate::{features::repo_open, App, Message, StashPrompt, StashPromptAction};
 
 impl App {
@@ -64,10 +65,27 @@ impl App {
                 self.start_stash_operation(operation)
             }
             StashMessage::Done { operation, result } => {
-                let completion = self.complete_manual_op(
-                    &OperationKind::ManualAction("stash"),
-                    result.as_ref().map(|_| ()).map_err(|e| e.clone()),
-                );
+                let completion = match self
+                    .operation_tracker
+                    .current_id_for(&OperationKind::ManualAction("stash"))
+                {
+                    Some(id) => {
+                        let event = match &result {
+                            Ok(()) => OperationEvent::Completed {
+                                id,
+                                result: OpResult::Success,
+                                severity: OpSeverity::Recoverable,
+                            },
+                            Err(message) => OperationEvent::Completed {
+                                id,
+                                result: OpResult::Failed(message.clone()),
+                                severity: OpSeverity::Recoverable,
+                            },
+                        };
+                        Task::done(Message::Operation(event))
+                    }
+                    None => Task::none(),
+                };
                 self.operation.loading = false;
                 match result {
                     Ok(()) => {
@@ -79,18 +97,18 @@ impl App {
                             self.operation.pending_transient_status_after_reload =
                                 Some(status_message);
                             self.operation.loading = true;
-                            let reload_start = self.start_manual_op(
-                                OperationKind::Custom("repo_open".to_string()),
-                                "Reloading repository…".to_string(),
-                            );
-                            completion.chain(
-                                reload_start.chain(Task::perform(
-                                    repo_open::task::load(path),
-                                    |result| {
-                                        Message::from(repo_open::Message::Loaded(Box::new(result)))
-                                    },
-                                )),
-                            )
+                            let reload_start =
+                                Task::done(Message::Operation(OperationEvent::Started {
+                                    id: self.operation_tracker.next_id(),
+                                    kind: OperationKind::Custom("repo_open".to_string()),
+                                    label: "Reloading repository…".to_string(),
+                                }));
+                            completion.chain(reload_start.chain(Task::perform(
+                                repo_open::task::load(path),
+                                |result| {
+                                    Message::from(repo_open::Message::Loaded(Box::new(result)))
+                                },
+                            )))
                         } else {
                             self.set_transient_status(status_message);
                             completion
@@ -201,13 +219,20 @@ impl App {
                 format!("Creating branch {branch_name} from stash…")
             }
         };
-        let start = self.start_manual_op(OperationKind::ManualAction("stash"), label);
-        start.chain(Task::perform(stash::task::run(path, operation), move |result| {
-            Message::from(StashMessage::Done {
-                operation: operation_for_message.clone(),
-                result,
-            })
-        }))
+        let start = Task::done(Message::Operation(OperationEvent::Started {
+            id: self.operation_tracker.next_id(),
+            kind: OperationKind::ManualAction("stash"),
+            label,
+        }));
+        start.chain(Task::perform(
+            stash::task::run(path, operation),
+            move |result| {
+                Message::from(StashMessage::Done {
+                    operation: operation_for_message.clone(),
+                    result,
+                })
+            },
+        ))
     }
 }
 

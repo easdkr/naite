@@ -2,6 +2,8 @@ use iced::Task;
 use naite_core::{GitHubIssueFilter, GitHubIssueSummary, ListGitHubIssuesOptions};
 
 use crate::features::github_issue;
+use crate::message::OperationEvent;
+use crate::state::{OpResult, OpSeverity, OperationKind};
 use crate::{App, Message};
 
 impl App {
@@ -68,16 +70,43 @@ impl App {
             github_issue::Message::OpenInBrowserRequested(issue) => {
                 self.start_github_issue_open(issue)
             }
-            github_issue::Message::OpenInBrowserDone { number, result } => match result {
-                Ok(()) => {
-                    self.set_transient_status(format!("Opened GitHub issue #{number} in browser"));
-                    Task::none()
+            github_issue::Message::OpenInBrowserDone { number, result } => {
+                let kind = OperationKind::ManualAction("github_issue_open");
+                match result {
+                    Ok(()) => {
+                        let id = self.operation_tracker.next_id();
+                        self.set_transient_status(format!(
+                            "Opened GitHub issue #{number} in browser"
+                        ));
+                        let start = Task::done(Message::Operation(OperationEvent::Started {
+                            id,
+                            kind,
+                            label: format!("Opening GitHub issue #{number}…"),
+                        }));
+                        let complete = Task::done(Message::Operation(OperationEvent::Completed {
+                            id,
+                            result: OpResult::Success,
+                            severity: OpSeverity::Recoverable,
+                        }));
+                        start.chain(complete)
+                    }
+                    Err(msg) => {
+                        let id = self.operation_tracker.next_id();
+                        self.operation.error = Some(msg.clone());
+                        let start = Task::done(Message::Operation(OperationEvent::Started {
+                            id,
+                            kind,
+                            label: format!("Opening GitHub issue #{number}…"),
+                        }));
+                        let complete = Task::done(Message::Operation(OperationEvent::Completed {
+                            id,
+                            result: OpResult::Failed(msg),
+                            severity: OpSeverity::Recoverable,
+                        }));
+                        start.chain(complete)
+                    }
                 }
-                Err(msg) => {
-                    self.operation.error = Some(msg);
-                    Task::none()
-                }
-            },
+            }
         }
     }
 

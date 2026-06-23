@@ -3,7 +3,8 @@ use iced::Task;
 use naite_core::CommitSummary;
 
 use crate::features::branch_create::{self, Message as BranchCreateMessage};
-use crate::state::{BranchCreateBase, BranchCreateState, OperationKind};
+use crate::message::OperationEvent;
+use crate::state::{BranchCreateBase, BranchCreateState, OpResult, OpSeverity, OperationKind};
 use crate::{features::repo_open, App, Message};
 
 impl App {
@@ -23,28 +24,45 @@ impl App {
             }
             BranchCreateMessage::Submitted => self.start_branch_create(),
             BranchCreateMessage::Done(result) => {
-                let completion = self.complete_manual_op(
-                    &OperationKind::ManualAction("branch_create"),
-                    result.as_ref().map(|_| ()).map_err(|e| e.clone()),
-                );
+                let completion = match self
+                    .operation_tracker
+                    .current_id_for(&OperationKind::ManualAction("branch_create"))
+                {
+                    Some(id) => {
+                        let event = match &result {
+                            Ok(()) => OperationEvent::Completed {
+                                id,
+                                result: OpResult::Success,
+                                severity: OpSeverity::Recoverable,
+                            },
+                            Err(message) => OperationEvent::Completed {
+                                id,
+                                result: OpResult::Failed(message.clone()),
+                                severity: OpSeverity::Recoverable,
+                            },
+                        };
+                        Task::done(Message::Operation(event))
+                    }
+                    None => Task::none(),
+                };
                 self.operation.loading = false;
                 match result {
                     Ok(()) => {
                         self.branch_create = BranchCreateState::default();
                         if let Some(path) = self.repo.path.clone() {
                             self.operation.loading = true;
-                            let reload_start = self.start_manual_op(
-                                OperationKind::Custom("repo_open".to_string()),
-                                "Reloading repository…".to_string(),
-                            );
-                            completion.chain(
-                                reload_start.chain(Task::perform(
-                                    repo_open::task::load(path),
-                                    |result| {
-                                        Message::from(repo_open::Message::Loaded(Box::new(result)))
-                                    },
-                                )),
-                            )
+                            let reload_start =
+                                Task::done(Message::Operation(OperationEvent::Started {
+                                    id: self.operation_tracker.next_id(),
+                                    kind: OperationKind::Custom("repo_open".to_string()),
+                                    label: "Reloading repository…".to_string(),
+                                }));
+                            completion.chain(reload_start.chain(Task::perform(
+                                repo_open::task::load(path),
+                                |result| {
+                                    Message::from(repo_open::Message::Loaded(Box::new(result)))
+                                },
+                            )))
                         } else {
                             completion
                         }
@@ -100,7 +118,11 @@ impl App {
         self.operation.error = None;
         self.operation.loading = true;
         let label = format!("Creating branch {}…", self.branch_create.name);
-        let start = self.start_manual_op(OperationKind::ManualAction("branch_create"), label);
+        let start = Task::done(Message::Operation(OperationEvent::Started {
+            id: self.operation_tracker.next_id(),
+            kind: OperationKind::ManualAction("branch_create"),
+            label,
+        }));
         start.chain(Task::perform(
             branch_create::task::run(
                 path,

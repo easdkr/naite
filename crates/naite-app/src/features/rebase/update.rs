@@ -8,7 +8,8 @@ use crate::features::rebase::{
     RebaseApplyMode, RebasePlanPreset,
 };
 use crate::features::{release_prep, repo_open};
-use crate::state::{OpSeverity, OperationKind, ReleasePrepPhase};
+use crate::message::OperationEvent;
+use crate::state::{OpResult, OpSeverity, OperationKind, ReleasePrepPhase};
 use crate::tasks;
 use crate::{App, Message, RebasePrompt, RebasePromptRow};
 
@@ -24,10 +25,17 @@ impl App {
                 current_branch,
                 current_author_email,
             } => {
-                let completion = self.complete_manual_op(
-                    &OperationKind::ManualAction("rebase_load_plan"),
-                    Ok(()),
-                );
+                let completion = match self
+                    .operation_tracker
+                    .current_id_for(&OperationKind::ManualAction("rebase_load_plan"))
+                {
+                    Some(id) => Task::done(Message::Operation(OperationEvent::Completed {
+                        id,
+                        result: OpResult::Success,
+                        severity: OpSeverity::Recoverable,
+                    })),
+                    None => Task::none(),
+                };
                 self.operation.loading = false;
                 self.selection.context_menu = None;
                 self.rebase = Some(InteractiveRebaseSession {
@@ -42,13 +50,23 @@ impl App {
                     scroll_offset: 0.0,
                 });
                 let avatar_fetches = self.resolve_rebase_plan_avatars();
-                completion.chain(Task::batch([avatar_fetches, self.load_selected_rebase_diff()]))
+                completion.chain(Task::batch([
+                    avatar_fetches,
+                    self.load_selected_rebase_diff(),
+                ]))
             }
             RebaseMessage::LoadFailed(message) => {
-                let completion = self.complete_manual_op(
-                    &OperationKind::ManualAction("rebase_load_plan"),
-                    Err(message.clone()),
-                );
+                let completion = match self
+                    .operation_tracker
+                    .current_id_for(&OperationKind::ManualAction("rebase_load_plan"))
+                {
+                    Some(id) => Task::done(Message::Operation(OperationEvent::Completed {
+                        id,
+                        result: OpResult::Failed(message.clone()),
+                        severity: OpSeverity::Recoverable,
+                    })),
+                    None => Task::none(),
+                };
                 self.operation.loading = false;
                 self.operation.error = Some(message);
                 completion
@@ -199,31 +217,28 @@ impl App {
         if !matches!(target.kind, RefKind::LocalBranch | RefKind::RemoteBranch) || target.is_head {
             let msg = "choose a non-HEAD branch as the rebase target".to_string();
             self.operation.fatal_error = Some(msg.clone());
-            return self.fail_validation_op(
+            return self.fatal_validation_op(
                 OperationKind::ManualAction("rebase_load_plan"),
                 "Validating rebase target…".to_string(),
                 msg,
-                OpSeverity::Fatal,
             );
         }
         if self.repo.operation_state.is_busy() {
             let msg = "another Git operation is already in progress".to_string();
             self.operation.fatal_error = Some(msg.clone());
-            return self.fail_validation_op(
+            return self.fatal_validation_op(
                 OperationKind::ManualAction("rebase_load_plan"),
                 "Checking operation state…".to_string(),
                 msg,
-                OpSeverity::Fatal,
             );
         }
         if self.repo.status_detail.is_dirty() {
             let msg = "worktree has local changes".to_string();
             self.operation.fatal_error = Some(msg.clone());
-            return self.fail_validation_op(
+            return self.fatal_validation_op(
                 OperationKind::ManualAction("rebase_load_plan"),
                 "Checking worktree state…".to_string(),
                 msg,
-                OpSeverity::Fatal,
             );
         }
         let Some(current_branch) = self
@@ -236,18 +251,21 @@ impl App {
         else {
             let msg = "current HEAD is detached".to_string();
             self.operation.fatal_error = Some(msg.clone());
-            return self.fail_validation_op(
+            return self.fatal_validation_op(
                 OperationKind::ManualAction("rebase_load_plan"),
                 "Checking current branch…".to_string(),
                 msg,
-                OpSeverity::Fatal,
             );
         };
 
         self.operation.error = None;
         self.operation.loading = true;
         let label = format!("Loading rebase plan onto {}…", target.short_name);
-        let start = self.start_manual_op(OperationKind::ManualAction("rebase_load_plan"), label);
+        let start = Task::done(Message::Operation(OperationEvent::Started {
+            id: self.operation_tracker.next_id(),
+            kind: OperationKind::ManualAction("rebase_load_plan"),
+            label,
+        }));
         let target_ref = target.full_name.clone();
         let target_for_message = target.clone();
         start.chain(Task::perform(
@@ -262,6 +280,26 @@ impl App {
                 Err(message) => Message::from(RebaseMessage::LoadFailed(message)),
             },
         ))
+    }
+
+    fn fatal_validation_op(
+        &mut self,
+        kind: OperationKind,
+        label: String,
+        message: String,
+    ) -> Task<Message> {
+        let id = self.operation_tracker.next_id();
+        let start = Task::done(Message::Operation(OperationEvent::Started {
+            id,
+            kind,
+            label,
+        }));
+        let complete = Task::done(Message::Operation(OperationEvent::Completed {
+            id,
+            result: OpResult::Failed(message),
+            severity: OpSeverity::Fatal,
+        }));
+        start.chain(complete)
     }
 
     fn set_rebase_action(&mut self, index: usize, action: RebaseAction) -> Task<Message> {
@@ -356,8 +394,19 @@ impl App {
         let (plan, reword_drafts, status) = match preset_result {
             Ok(result) => result,
             Err(message) => {
-                self.operation.error = Some(message);
-                return Task::none();
+                let id = self.operation_tracker.next_id();
+                self.operation.error = Some(message.clone());
+                let start = Task::done(Message::Operation(OperationEvent::Started {
+                    id,
+                    kind: OperationKind::ManualAction("rebase_load_plan"),
+                    label: "Computing rebase preset…".to_string(),
+                }));
+                let complete = Task::done(Message::Operation(OperationEvent::Completed {
+                    id,
+                    result: OpResult::Failed(message),
+                    severity: OpSeverity::Recoverable,
+                }));
+                return start.chain(complete);
             }
         };
 
@@ -417,26 +466,46 @@ impl App {
             RebaseApplyMode::RebaseOnly => {}
             RebaseApplyMode::RebaseThenForcePush => {
                 if self.release_prep.active_profile.is_some() {
-                    self.operation.error = Some(
-                        "release promotion applies the rebase locally; push the target, then sync the source"
-                            .into(),
-                    );
-                    return Task::none();
+                    let message =
+                        "release promotion applies the rebase locally; push the target, then sync the source";
+                    let id = self.operation_tracker.next_id();
+                    self.operation.error = Some(message.to_string());
+                    let start = Task::done(Message::Operation(OperationEvent::Started {
+                        id,
+                        kind: OperationKind::ManualAction("rebase_apply"),
+                        label: "Preparing rebase prompt…".to_string(),
+                    }));
+                    let complete = Task::done(Message::Operation(OperationEvent::Completed {
+                        id,
+                        result: OpResult::Failed(message.to_string()),
+                        severity: OpSeverity::Recoverable,
+                    }));
+                    return start.chain(complete);
                 }
                 if let Err(message) = self.force_push_prompt_for_current_branch() {
-                    self.operation.error = Some(message);
-                    return Task::none();
+                    let id = self.operation_tracker.next_id();
+                    self.operation.error = Some(message.clone());
+                    let start = Task::done(Message::Operation(OperationEvent::Started {
+                        id,
+                        kind: OperationKind::ManualAction("rebase_apply"),
+                        label: "Preparing rebase prompt…".to_string(),
+                    }));
+                    let complete = Task::done(Message::Operation(OperationEvent::Completed {
+                        id,
+                        result: OpResult::Failed(message),
+                        severity: OpSeverity::Recoverable,
+                    }));
+                    return start.chain(complete);
                 }
             }
             RebaseApplyMode::ReleasePromotionAuto => {
                 if self.release_prep.active_profile.is_none() {
                     let msg = "Plan a release promotion first".to_string();
                     self.operation.fatal_error = Some(msg.clone());
-                    return self.fail_validation_op(
+                    return self.fatal_validation_op(
                         OperationKind::ManualAction("rebase_apply"),
                         "Preparing rebase prompt…".to_string(),
                         msg,
-                        OpSeverity::Fatal,
                     );
                 }
             }
@@ -543,10 +612,11 @@ impl App {
         self.release_prep.auto_running = false;
         self.release_prep.auto_next_action = None;
 
-        let start = self.start_manual_op(
-            OperationKind::ManualAction("rebase_apply"),
-            "Applying interactive rebase…".to_string(),
-        );
+        let start = Task::done(Message::Operation(OperationEvent::Started {
+            id: self.operation_tracker.next_id(),
+            kind: OperationKind::ManualAction("rebase_apply"),
+            label: "Applying interactive rebase…".to_string(),
+        }));
         start.chain(Task::perform(
             rebase::task::apply_plan(path, target_ref, entries, reword_messages),
             move |result| Message::from(RebaseMessage::Done { result, apply_mode }),
@@ -558,10 +628,27 @@ impl App {
         result: Result<ApplyOutcome, String>,
         apply_mode: RebaseApplyMode,
     ) -> Task<Message> {
-        let completion = self.complete_manual_op(
-            &OperationKind::ManualAction("rebase_apply"),
-            result.as_ref().map(|_| ()).map_err(|e| e.clone()),
-        );
+        let completion = match self
+            .operation_tracker
+            .current_id_for(&OperationKind::ManualAction("rebase_apply"))
+        {
+            Some(id) => {
+                let event = match &result {
+                    Ok(_) => OperationEvent::Completed {
+                        id,
+                        result: OpResult::Success,
+                        severity: OpSeverity::Recoverable,
+                    },
+                    Err(message) => OperationEvent::Completed {
+                        id,
+                        result: OpResult::Failed(message.clone()),
+                        severity: OpSeverity::Recoverable,
+                    },
+                };
+                Task::done(Message::Operation(event))
+            }
+            None => Task::none(),
+        };
         self.operation.loading = false;
         if let Some(session) = self.rebase.as_mut() {
             session.applying = false;
@@ -596,10 +683,11 @@ impl App {
                     );
                     self.operation.pending_force_push_after_reload = pending_force_push;
                     self.operation.loading = true;
-                    let reload_start = self.start_manual_op(
-                        OperationKind::Custom("repo_open".to_string()),
-                        "Reloading repository…".to_string(),
-                    );
+                    let reload_start = Task::done(Message::Operation(OperationEvent::Started {
+                        id: self.operation_tracker.next_id(),
+                        kind: OperationKind::Custom("repo_open".to_string()),
+                        label: "Reloading repository…".to_string(),
+                    }));
                     completion.chain(
                         reload_start.chain(Task::perform(repo_open::task::load(path), |result| {
                             Message::from(repo_open::Message::Loaded(Box::new(result)))
@@ -619,10 +707,11 @@ impl App {
                         Some("Interactive rebase paused on conflicts".into());
                     self.operation.pending_error_after_reload = Some(message);
                     self.operation.loading = true;
-                    let reload_start = self.start_manual_op(
-                        OperationKind::Custom("repo_open_reload".to_string()),
-                        "Reloading repository…".to_string(),
-                    );
+                    let reload_start = Task::done(Message::Operation(OperationEvent::Started {
+                        id: self.operation_tracker.next_id(),
+                        kind: OperationKind::Custom("repo_open_reload".to_string()),
+                        label: "Reloading repository…".to_string(),
+                    }));
                     completion.chain(
                         reload_start.chain(Task::perform(repo_open::task::load(path), |result| {
                             Message::from(repo_open::Message::Loaded(Box::new(result)))
@@ -631,7 +720,20 @@ impl App {
                 } else {
                     self.set_transient_status("Interactive rebase paused on conflicts".into());
                     self.operation.fatal_error = Some(message);
-                    completion
+                    let id = self.operation_tracker.next_id();
+                    let start = Task::done(Message::Operation(OperationEvent::Started {
+                        id,
+                        kind: OperationKind::ManualAction("rebase_apply"),
+                        label: "Interactive rebase paused".to_string(),
+                    }));
+                    let complete = Task::done(Message::Operation(OperationEvent::Completed {
+                        id,
+                        result: OpResult::Failed(
+                            "Interactive rebase paused on conflicts".to_string(),
+                        ),
+                        severity: OpSeverity::Fatal,
+                    }));
+                    completion.chain(start.chain(complete))
                 }
             }
             Err(message) => {

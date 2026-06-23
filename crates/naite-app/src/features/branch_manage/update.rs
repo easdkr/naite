@@ -4,7 +4,8 @@ use naite_core::{RefKind, RefSummary};
 
 use crate::app::remote_ref_local_branch;
 use crate::features::branch_manage::{self, Message as BranchManageMessage, Operation};
-use crate::state::{BranchManageRenameState, OperationKind};
+use crate::message::OperationEvent;
+use crate::state::{BranchManageRenameState, OpResult, OpSeverity, OperationKind};
 use crate::{features::repo_open, App, BranchDeletePrompt, BranchDeleteTarget, Message};
 
 impl App {
@@ -48,10 +49,21 @@ impl App {
                     return Task::none();
                 };
                 if !prompt.linked_worktrees.is_empty() && !prompt.delete_linked_worktrees {
-                    self.operation.error =
-                        Some("Enable linked worktree removal before deleting this branch.".into());
+                    let message = "Enable linked worktree removal before deleting this branch.";
+                    let id = self.operation_tracker.next_id();
+                    self.operation.error = Some(message.to_string());
+                    let start = Task::done(Message::Operation(OperationEvent::Started {
+                        id,
+                        kind: OperationKind::ManualAction("branch_manage"),
+                        label: "Validating delete…".to_string(),
+                    }));
+                    let complete = Task::done(Message::Operation(OperationEvent::Completed {
+                        id,
+                        result: OpResult::Failed(message.to_string()),
+                        severity: OpSeverity::Recoverable,
+                    }));
                     self.selection.branch_delete_confirmation = Some(prompt);
-                    return Task::none();
+                    return start.chain(complete);
                 }
                 self.start_branch_manage_operation(Operation::Delete {
                     target: prompt.target,
@@ -62,10 +74,27 @@ impl App {
                 })
             }
             BranchManageMessage::Done { operation, result } => {
-                let completion = self.complete_manual_op(
-                    &OperationKind::ManualAction("branch_manage"),
-                    result.as_ref().map(|_| ()).map_err(|e| e.clone()),
-                );
+                let completion = match self
+                    .operation_tracker
+                    .current_id_for(&OperationKind::ManualAction("branch_manage"))
+                {
+                    Some(id) => {
+                        let event = match &result {
+                            Ok(()) => OperationEvent::Completed {
+                                id,
+                                result: OpResult::Success,
+                                severity: OpSeverity::Recoverable,
+                            },
+                            Err(message) => OperationEvent::Completed {
+                                id,
+                                result: OpResult::Failed(message.clone()),
+                                severity: OpSeverity::Recoverable,
+                            },
+                        };
+                        Task::done(Message::Operation(event))
+                    }
+                    None => Task::none(),
+                };
                 self.operation.loading = false;
                 match result {
                     Ok(()) => {
@@ -77,18 +106,18 @@ impl App {
                             self.operation.pending_transient_status_after_reload =
                                 Some(status_message);
                             self.operation.loading = true;
-                            let reload_start = self.start_manual_op(
-                                OperationKind::Custom("repo_open".to_string()),
-                                "Reloading repository…".to_string(),
-                            );
-                            completion.chain(
-                                reload_start.chain(Task::perform(
-                                    repo_open::task::load(path),
-                                    |result| {
-                                        Message::from(repo_open::Message::Loaded(Box::new(result)))
-                                    },
-                                )),
-                            )
+                            let reload_start =
+                                Task::done(Message::Operation(OperationEvent::Started {
+                                    id: self.operation_tracker.next_id(),
+                                    kind: OperationKind::Custom("repo_open".to_string()),
+                                    label: "Reloading repository…".to_string(),
+                                }));
+                            completion.chain(reload_start.chain(Task::perform(
+                                repo_open::task::load(path),
+                                |result| {
+                                    Message::from(repo_open::Message::Loaded(Box::new(result)))
+                                },
+                            )))
                         } else {
                             self.set_transient_status(status_message);
                             completion
@@ -200,13 +229,20 @@ impl App {
             Operation::Rename { target, .. } => format!("Renaming {}…", target.short_name),
             Operation::Delete { .. } => "Deleting branch…".to_string(),
         };
-        let start = self.start_manual_op(OperationKind::ManualAction("branch_manage"), label);
-        start.chain(Task::perform(branch_manage::task::run(path, operation), move |result| {
-            Message::from(BranchManageMessage::Done {
-                operation: operation_for_message.clone(),
-                result,
-            })
-        }))
+        let start = Task::done(Message::Operation(OperationEvent::Started {
+            id: self.operation_tracker.next_id(),
+            kind: OperationKind::ManualAction("branch_manage"),
+            label,
+        }));
+        start.chain(Task::perform(
+            branch_manage::task::run(path, operation),
+            move |result| {
+                Message::from(BranchManageMessage::Done {
+                    operation: operation_for_message.clone(),
+                    result,
+                })
+            },
+        ))
     }
 
     fn matching_local_branches_for_delete(&self, target: &BranchDeleteTarget) -> Vec<String> {

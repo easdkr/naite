@@ -1,6 +1,8 @@
 use iced::Task;
 
 use crate::features::{repo_open, workspace};
+use crate::message::OperationEvent;
+use crate::state::{OpResult, OpSeverity, OperationKind};
 use crate::{App, Message};
 
 impl App {
@@ -19,13 +21,17 @@ impl App {
                 Task::none()
             }
             workspace::Message::FetchAllRequested => self.start_workspace_fetch_all(),
-            workspace::Message::FetchAllDone(summary) => {
-                self.finish_workspace_operation(summary, "Fetched workspace repositories".into())
-            }
+            workspace::Message::FetchAllDone(summary) => self.finish_workspace_operation(
+                "workspace_fetch_all",
+                summary,
+                "Fetched workspace repositories".into(),
+            ),
             workspace::Message::PullAllRequested => self.start_workspace_pull_all(),
-            workspace::Message::PullAllDone(summary) => {
-                self.finish_workspace_operation(summary, "Pulled workspace repositories".into())
-            }
+            workspace::Message::PullAllDone(summary) => self.finish_workspace_operation(
+                "workspace_pull_all",
+                summary,
+                "Pulled workspace repositories".into(),
+            ),
             workspace::Message::OpenRepo(path) => {
                 self.workspace.dashboard_open = false;
                 self.update(repo_open::Message::OpenRecent(path).into())
@@ -40,8 +46,19 @@ impl App {
                 Task::none()
             }
             workspace::Message::LocateDone(Err(msg)) => {
-                self.operation.error = Some(msg);
-                Task::none()
+                let id = self.operation_tracker.next_id();
+                self.operation.error = Some(msg.clone());
+                let start = Task::done(Message::Operation(OperationEvent::Started {
+                    id,
+                    kind: OperationKind::Custom("workspace_locate".to_string()),
+                    label: "Revealing repository in Finder…".to_string(),
+                }));
+                let complete = Task::done(Message::Operation(OperationEvent::Completed {
+                    id,
+                    result: OpResult::Failed(msg),
+                    severity: OpSeverity::Recoverable,
+                }));
+                start.chain(complete)
             }
             workspace::Message::RemoveRepo(path) => {
                 self.catalog.remove_entry(&path);
@@ -81,9 +98,15 @@ impl App {
         }
         self.operation.loading = true;
         self.operation.error = None;
-        Task::perform(workspace::task::fetch_all(paths), |summary| {
-            Message::from(workspace::Message::FetchAllDone(summary))
-        })
+        let start = Task::done(Message::Operation(OperationEvent::Started {
+            id: self.operation_tracker.next_id(),
+            kind: OperationKind::ManualAction("workspace_fetch_all"),
+            label: format!("Fetching {} repositories…", paths.len()),
+        }));
+        start.chain(Task::perform(
+            workspace::task::fetch_all(paths),
+            |summary| Message::from(workspace::Message::FetchAllDone(summary)),
+        ))
     }
 
     fn start_workspace_pull_all(&mut self) -> Task<Message> {
@@ -93,33 +116,59 @@ impl App {
         }
         self.operation.loading = true;
         self.operation.error = None;
-        Task::perform(workspace::task::pull_all(paths), |summary| {
+        let start = Task::done(Message::Operation(OperationEvent::Started {
+            id: self.operation_tracker.next_id(),
+            kind: OperationKind::ManualAction("workspace_pull_all"),
+            label: format!("Pulling {} repositories…", paths.len()),
+        }));
+        start.chain(Task::perform(workspace::task::pull_all(paths), |summary| {
             Message::from(workspace::Message::PullAllDone(summary))
-        })
+        }))
     }
 
     fn finish_workspace_operation(
         &mut self,
+        kind_label: &'static str,
         summary: workspace::MultiRepoOperationSummary,
         success_message: String,
     ) -> Task<Message> {
+        let kind = OperationKind::ManualAction(kind_label);
         self.operation.loading = false;
+        let completion = match self.operation_tracker.current_id_for(&kind) {
+            Some(id) => {
+                let event = if summary.failures.is_empty() {
+                    OperationEvent::Completed {
+                        id,
+                        result: OpResult::Success,
+                        severity: OpSeverity::Recoverable,
+                    }
+                } else {
+                    let failures = summary
+                        .failures
+                        .iter()
+                        .map(|(path, err)| format!("{}: {err}", path.display()))
+                        .collect::<Vec<_>>()
+                        .join("; ");
+                    let message = format!(
+                        "{success_message}: {} succeeded, {} failed. {failures}",
+                        summary.succeeded,
+                        summary.failures.len()
+                    );
+                    self.operation.error = Some(message.clone());
+                    OperationEvent::Completed {
+                        id,
+                        result: OpResult::Failed(message),
+                        severity: OpSeverity::Recoverable,
+                    }
+                };
+                Task::done(Message::Operation(event))
+            }
+            None => Task::none(),
+        };
         if summary.failures.is_empty() {
             self.set_transient_status(format!("{success_message}: {}", summary.succeeded));
-        } else {
-            let failures = summary
-                .failures
-                .iter()
-                .map(|(path, err)| format!("{}: {err}", path.display()))
-                .collect::<Vec<_>>()
-                .join("; ");
-            self.operation.error = Some(format!(
-                "{success_message}: {} succeeded, {} failed. {failures}",
-                summary.succeeded,
-                summary.failures.len()
-            ));
         }
-        self.refresh_workspace()
+        completion.chain(self.refresh_workspace())
     }
 
     fn workspace_paths(&self) -> Vec<std::path::PathBuf> {

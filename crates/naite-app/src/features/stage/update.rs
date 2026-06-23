@@ -1,6 +1,8 @@
 use iced::Task;
 
 use crate::features::stage::{self, Message as StageMessage, Operation};
+use crate::message::OperationEvent;
+use crate::state::{OpResult, OpSeverity, OperationKind};
 use crate::{App, Message};
 
 impl App {
@@ -21,6 +23,25 @@ impl App {
             StageMessage::All => self.start_stage_operation(Operation::StageAll),
             StageMessage::UnstageAll => self.start_stage_operation(Operation::UnstageAll),
             StageMessage::Done(result) => {
+                let kind = OperationKind::ManualAction("stage");
+                let completion = match self.operation_tracker.current_id_for(&kind) {
+                    Some(id) => {
+                        let event = match &result {
+                            Ok(_) => OperationEvent::Completed {
+                                id,
+                                result: OpResult::Success,
+                                severity: OpSeverity::Recoverable,
+                            },
+                            Err(message) => OperationEvent::Completed {
+                                id,
+                                result: OpResult::Failed(message.clone()),
+                                severity: OpSeverity::Recoverable,
+                            },
+                        };
+                        Task::done(Message::Operation(event))
+                    }
+                    None => Task::none(),
+                };
                 self.operation.loading = false;
                 match result {
                     Ok(status_detail) => {
@@ -31,14 +52,17 @@ impl App {
                         }
                         self.operation.error = None;
                         if self.selection.selected_wip {
-                            return self.select_wip_after_status_update(previous_target.as_ref());
+                            return completion.chain(
+                                self.select_wip_after_status_update(previous_target.as_ref()),
+                            );
                         }
+                        completion
                     }
                     Err(msg) => {
                         self.operation.error = Some(msg);
+                        completion
                     }
                 }
-                Task::none()
             }
         }
     }
@@ -50,8 +74,21 @@ impl App {
 
         self.operation.error = None;
         self.operation.loading = true;
-        Task::perform(stage::task::run(path, operation), |result| {
+        let label = match &operation {
+            Operation::StagePath(_) | Operation::StageHunk { .. } | Operation::StageAll => {
+                "Staging…".to_string()
+            }
+            Operation::UnstagePath(_) | Operation::UnstageHunk { .. } | Operation::UnstageAll => {
+                "Unstaging…".to_string()
+            }
+        };
+        let start = Task::done(Message::Operation(OperationEvent::Started {
+            id: self.operation_tracker.next_id(),
+            kind: OperationKind::ManualAction("stage"),
+            label,
+        }));
+        start.chain(Task::perform(stage::task::run(path, operation), |result| {
             Message::from(StageMessage::Done(result))
-        })
+        }))
     }
 }

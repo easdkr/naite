@@ -3,7 +3,8 @@ use naite_core::{CommitSummary, ResetMode};
 
 use crate::features::repo_open;
 use crate::features::reset::{self, Message as ResetMessage};
-use crate::state::OperationKind;
+use crate::message::OperationEvent;
+use crate::state::{OpResult, OpSeverity, OperationKind};
 use crate::{App, Message, ResetPrompt};
 
 impl App {
@@ -51,7 +52,11 @@ impl App {
         let commit = prompt.target;
         let commit_for_message = commit.clone();
         let label = format!("Resetting to {}…", commit.short_id);
-        let start = self.start_manual_op(OperationKind::ManualAction("reset"), label);
+        let start = Task::done(Message::Operation(OperationEvent::Started {
+            id: self.operation_tracker.next_id(),
+            kind: OperationKind::ManualAction("reset"),
+            label,
+        }));
         start.chain(Task::perform(
             reset::task::run(path, commit.id.clone(), mode),
             move |result| {
@@ -70,10 +75,27 @@ impl App {
         mode: ResetMode,
         result: Result<(), String>,
     ) -> Task<Message> {
-        let completion = self.complete_manual_op(
-            &OperationKind::ManualAction("reset"),
-            result.as_ref().map(|_| ()).map_err(|e| e.clone()),
-        );
+        let completion = match self
+            .operation_tracker
+            .current_id_for(&OperationKind::ManualAction("reset"))
+        {
+            Some(id) => {
+                let event = match &result {
+                    Ok(()) => OperationEvent::Completed {
+                        id,
+                        result: OpResult::Success,
+                        severity: OpSeverity::Recoverable,
+                    },
+                    Err(message) => OperationEvent::Completed {
+                        id,
+                        result: OpResult::Failed(message.clone()),
+                        severity: OpSeverity::Recoverable,
+                    },
+                };
+                Task::done(Message::Operation(event))
+            }
+            None => Task::none(),
+        };
         self.operation.loading = false;
         match result {
             Ok(()) => {
@@ -86,10 +108,11 @@ impl App {
                 if let Some(path) = self.repo.path.clone() {
                     self.operation.pending_transient_status_after_reload = Some(status_message);
                     self.operation.loading = true;
-                    let reload_start = self.start_manual_op(
-                        OperationKind::Custom("repo_open".to_string()),
-                        "Reloading repository…".to_string(),
-                    );
+                    let reload_start = Task::done(Message::Operation(OperationEvent::Started {
+                        id: self.operation_tracker.next_id(),
+                        kind: OperationKind::Custom("repo_open".to_string()),
+                        label: "Reloading repository…".to_string(),
+                    }));
                     completion.chain(
                         reload_start.chain(Task::perform(repo_open::task::load(path), |result| {
                             Message::from(repo_open::Message::Loaded(Box::new(result)))

@@ -3,7 +3,8 @@ use iced::Task;
 
 use crate::features::history::{self, Message as HistoryMessage, Operation};
 use crate::features::repo_open;
-use crate::state::{HistoryRewordState, OperationKind, UndoCheckpoint};
+use crate::message::OperationEvent;
+use crate::state::{HistoryRewordState, OpResult, OpSeverity, OperationKind, UndoCheckpoint};
 use crate::{App, HistoryPrompt, Message, UndoPrompt, UndoPromptAction};
 
 impl App {
@@ -180,15 +181,22 @@ impl App {
         self.operation.loading = true;
         let operation_for_message = operation.clone();
         let label = operation.title().to_string();
-        let start = self.start_manual_op(OperationKind::ManualAction("history"), label);
-        start.chain(Task::perform(history::task::run(path, operation), move |result| {
-            Message::from(HistoryMessage::Done {
-                operation: operation_for_message.clone(),
-                checkpoint: checkpoint.clone(),
-                head_before_reset: head_before_reset.clone(),
-                result,
-            })
-        }))
+        let start = Task::done(Message::Operation(OperationEvent::Started {
+            id: self.operation_tracker.next_id(),
+            kind: OperationKind::ManualAction("history"),
+            label,
+        }));
+        start.chain(Task::perform(
+            history::task::run(path, operation),
+            move |result| {
+                Message::from(HistoryMessage::Done {
+                    operation: operation_for_message.clone(),
+                    checkpoint: checkpoint.clone(),
+                    head_before_reset: head_before_reset.clone(),
+                    result,
+                })
+            },
+        ))
     }
 
     fn finish_history_operation(
@@ -198,10 +206,27 @@ impl App {
         head_before_reset: Option<UndoCheckpoint>,
         result: Result<(), String>,
     ) -> Task<Message> {
-        let completion = self.complete_manual_op(
-            &OperationKind::ManualAction("history"),
-            result.as_ref().map(|_| ()).map_err(|e| e.clone()),
-        );
+        let completion = match self
+            .operation_tracker
+            .current_id_for(&OperationKind::ManualAction("history"))
+        {
+            Some(id) => {
+                let event = match &result {
+                    Ok(()) => OperationEvent::Completed {
+                        id,
+                        result: OpResult::Success,
+                        severity: OpSeverity::Recoverable,
+                    },
+                    Err(message) => OperationEvent::Completed {
+                        id,
+                        result: OpResult::Failed(message.clone()),
+                        severity: OpSeverity::Recoverable,
+                    },
+                };
+                Task::done(Message::Operation(event))
+            }
+            None => Task::none(),
+        };
         self.operation.loading = false;
         match result {
             Ok(()) => {
@@ -233,10 +258,11 @@ impl App {
                 if let Some(path) = self.repo.path.clone() {
                     self.operation.pending_transient_status_after_reload = Some(status_message);
                     self.operation.loading = true;
-                    let reload_start = self.start_manual_op(
-                        OperationKind::Custom("repo_open".to_string()),
-                        "Reloading repository…".to_string(),
-                    );
+                    let reload_start = Task::done(Message::Operation(OperationEvent::Started {
+                        id: self.operation_tracker.next_id(),
+                        kind: OperationKind::Custom("repo_open".to_string()),
+                        label: "Reloading repository…".to_string(),
+                    }));
                     completion.chain(
                         reload_start.chain(Task::perform(repo_open::task::load(path), |result| {
                             Message::from(repo_open::Message::Loaded(Box::new(result)))

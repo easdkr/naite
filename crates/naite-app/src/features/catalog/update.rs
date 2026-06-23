@@ -1,6 +1,8 @@
 use iced::Task;
 
 use crate::features::catalog::{self, Message as CatalogMessage};
+use crate::message::OperationEvent;
+use crate::state::{OpResult, OpSeverity, OperationKind};
 use crate::{App, Message};
 
 impl App {
@@ -21,13 +23,35 @@ impl App {
                 }
             }
             CatalogMessage::Loaded(Err(msg)) => {
-                self.operation.error = Some(msg);
-                Task::none()
+                let id = self.operation_tracker.next_id();
+                self.operation.error = Some(msg.clone());
+                let start = Task::done(Message::Operation(OperationEvent::Started {
+                    id,
+                    kind: OperationKind::Custom("catalog_load".to_string()),
+                    label: "Loading catalog…".to_string(),
+                }));
+                let complete = Task::done(Message::Operation(OperationEvent::Completed {
+                    id,
+                    result: OpResult::Failed(msg),
+                    severity: OpSeverity::Recoverable,
+                }));
+                start.chain(complete)
             }
             CatalogMessage::Saved(Ok(())) => Task::none(),
             CatalogMessage::Saved(Err(msg)) => {
-                self.operation.error = Some(msg);
-                Task::none()
+                let id = self.operation_tracker.next_id();
+                self.operation.error = Some(msg.clone());
+                let start = Task::done(Message::Operation(OperationEvent::Started {
+                    id,
+                    kind: OperationKind::Custom("catalog_save".to_string()),
+                    label: "Saving catalog…".to_string(),
+                }));
+                let complete = Task::done(Message::Operation(OperationEvent::Completed {
+                    id,
+                    result: OpResult::Failed(msg),
+                    severity: OpSeverity::Recoverable,
+                }));
+                start.chain(complete)
             }
         }
     }

@@ -16,6 +16,7 @@ use crate::{
     features::release_prep::ReleasePrepAction,
     features::repo_open::LoadedRepo,
     features::terminal::{TerminalSessionId, TerminalTarget},
+    message::OperationEvent,
     theme::OP_HISTORY_CAP,
     BranchDeletePrompt, CheckoutPrompt, DiscardPrompt, ForcePushPrompt, ForceSyncPrompt,
     HistoryPrompt, RebasePrompt, ResetPrompt, StashPrompt, TagDeletePrompt, UndoPrompt,
@@ -201,6 +202,11 @@ pub struct ActiveOperation {
 #[derive(Debug, Clone)]
 pub struct CompletedOperation {
     pub id: OperationId,
+    /// Pre-positioned for upcoming toast/icon rendering — only `complete()`
+    /// currently writes it, so without this attribute the bin target flags
+    /// it as never-read. Tests and call sites that construct a
+    /// `CompletedOperation` directly still pass it through.
+    #[allow(dead_code)]
     pub kind: OperationKind,
     pub label: String,
     pub completed_at: Instant,
@@ -237,6 +243,7 @@ impl OperationTracker {
         self.next_id.wrapping_add(1)
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn start(&mut self, kind: OperationKind, label: impl Into<String>) -> OperationId {
         self.next_id = self.next_id.wrapping_add(1);
         let id = self.next_id;
@@ -339,6 +346,7 @@ impl OperationTracker {
             .map(|op| op.id)
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn fail(
         &mut self,
         id: OperationId,
@@ -362,6 +370,23 @@ impl OperationTracker {
         &self.in_flight
     }
 
+    /// Look up the in-flight id for `kind` and return a `Completed` event,
+    /// or `None` if no operation of that kind is currently in flight.
+    #[allow(dead_code)]
+    pub fn emit_completed(
+        &self,
+        kind: &OperationKind,
+        result: OpResult,
+        severity: OpSeverity,
+    ) -> Option<OperationEvent> {
+        let id = self.current_id_for(kind)?;
+        Some(OperationEvent::Completed {
+            id,
+            result,
+            severity,
+        })
+    }
+
     pub fn recent(&self, n: usize) -> &[CompletedOperation] {
         if n == 0 || self.history.is_empty() {
             return &[];
@@ -370,6 +395,7 @@ impl OperationTracker {
         &self.history.as_slices().0[start..]
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn active_long_running(&self, threshold_secs: u64) -> Option<&ActiveOperation> {
         let threshold = Duration::from_secs(threshold_secs);
         self.in_flight

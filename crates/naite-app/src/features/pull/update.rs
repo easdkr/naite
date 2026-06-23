@@ -1,7 +1,8 @@
 use iced::Task;
 
 use crate::features::pull::{self, Message as PullMessage, PullMode};
-use crate::state::OperationKind;
+use crate::message::OperationEvent;
+use crate::state::{OpResult, OpSeverity, OperationKind};
 use crate::{features::repo_open, App, Message};
 
 impl App {
@@ -9,10 +10,27 @@ impl App {
         match message {
             PullMessage::Requested(mode) => self.start_pull(mode),
             PullMessage::Done { mode, result } => {
-                let completion = self.complete_manual_op(
-                    &OperationKind::ManualAction("pull"),
-                    result.as_ref().map(|_| ()).map_err(|e| e.clone()),
-                );
+                let completion = match self
+                    .operation_tracker
+                    .current_id_for(&OperationKind::ManualAction("pull"))
+                {
+                    Some(id) => {
+                        let event = match &result {
+                            Ok(()) => OperationEvent::Completed {
+                                id,
+                                result: OpResult::Success,
+                                severity: OpSeverity::Recoverable,
+                            },
+                            Err(message) => OperationEvent::Completed {
+                                id,
+                                result: OpResult::Failed(message.clone()),
+                                severity: OpSeverity::Recoverable,
+                            },
+                        };
+                        Task::done(Message::Operation(event))
+                    }
+                    None => Task::none(),
+                };
                 self.operation.loading = false;
                 match result {
                     Ok(()) => {
@@ -21,18 +39,18 @@ impl App {
                             self.operation.pending_transient_status_after_reload =
                                 Some(status_message);
                             self.operation.loading = true;
-                            let reload_start = self.start_manual_op(
-                                OperationKind::Custom("repo_open".to_string()),
-                                "Reloading repository…".to_string(),
-                            );
-                            completion.chain(
-                                reload_start.chain(Task::perform(
-                                    repo_open::task::load(path),
-                                    |result| {
-                                        Message::from(repo_open::Message::Loaded(Box::new(result)))
-                                    },
-                                )),
-                            )
+                            let reload_start =
+                                Task::done(Message::Operation(OperationEvent::Started {
+                                    id: self.operation_tracker.next_id(),
+                                    kind: OperationKind::Custom("repo_open".to_string()),
+                                    label: "Reloading repository…".to_string(),
+                                }));
+                            completion.chain(reload_start.chain(Task::perform(
+                                repo_open::task::load(path),
+                                |result| {
+                                    Message::from(repo_open::Message::Loaded(Box::new(result)))
+                                },
+                            )))
                         } else {
                             self.set_transient_status(status_message);
                             completion
@@ -60,10 +78,11 @@ impl App {
         self.operation.transient_status = None;
         self.operation.pending_transient_status_after_reload = None;
         self.operation.loading = true;
-        let start = self.start_manual_op(
-            OperationKind::ManualAction("pull"),
-            "Pulling current branch…".to_string(),
-        );
+        let start = Task::done(Message::Operation(OperationEvent::Started {
+            id: self.operation_tracker.next_id(),
+            kind: OperationKind::ManualAction("pull"),
+            label: "Pulling current branch…".to_string(),
+        }));
         start.chain(Task::perform(pull::task::run(path, mode), move |result| {
             Message::from(PullMessage::Done { mode, result })
         }))

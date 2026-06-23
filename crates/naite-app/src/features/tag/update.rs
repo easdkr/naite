@@ -6,7 +6,8 @@ use naite_core::{CommitSummary, RefKind, RefSummary};
 
 use crate::features::repo_open;
 use crate::features::tag::{self, Message as TagMessage, Operation};
-use crate::state::{OperationKind, TagCreateState, TagNameMode};
+use crate::message::OperationEvent;
+use crate::state::{OpResult, OpSeverity, OperationKind, TagCreateState, TagNameMode};
 use crate::{App, Message, TagDeletePrompt};
 
 impl App {
@@ -47,10 +48,27 @@ impl App {
                 self.start_tag_operation(Operation::Delete(prompt.target))
             }
             TagMessage::Done { operation, result } => {
-                let completion = self.complete_manual_op(
-                    &OperationKind::ManualAction("tag"),
-                    result.as_ref().map(|_| ()).map_err(|e| e.clone()),
-                );
+                let completion = match self
+                    .operation_tracker
+                    .current_id_for(&OperationKind::ManualAction("tag"))
+                {
+                    Some(id) => {
+                        let event = match &result {
+                            Ok(()) => OperationEvent::Completed {
+                                id,
+                                result: OpResult::Success,
+                                severity: OpSeverity::Recoverable,
+                            },
+                            Err(message) => OperationEvent::Completed {
+                                id,
+                                result: OpResult::Failed(message.clone()),
+                                severity: OpSeverity::Recoverable,
+                            },
+                        };
+                        Task::done(Message::Operation(event))
+                    }
+                    None => Task::none(),
+                };
                 self.operation.loading = false;
                 match result {
                     Ok(()) => {
@@ -62,18 +80,18 @@ impl App {
                             self.operation.pending_transient_status_after_reload =
                                 Some(status_message);
                             self.operation.loading = true;
-                            let reload_start = self.start_manual_op(
-                                OperationKind::Custom("repo_open".to_string()),
-                                "Reloading repository…".to_string(),
-                            );
-                            completion.chain(
-                                reload_start.chain(Task::perform(
-                                    repo_open::task::load(path),
-                                    |result| {
-                                        Message::from(repo_open::Message::Loaded(Box::new(result)))
-                                    },
-                                )),
-                            )
+                            let reload_start =
+                                Task::done(Message::Operation(OperationEvent::Started {
+                                    id: self.operation_tracker.next_id(),
+                                    kind: OperationKind::Custom("repo_open".to_string()),
+                                    label: "Reloading repository…".to_string(),
+                                }));
+                            completion.chain(reload_start.chain(Task::perform(
+                                repo_open::task::load(path),
+                                |result| {
+                                    Message::from(repo_open::Message::Loaded(Box::new(result)))
+                                },
+                            )))
                         } else {
                             self.set_transient_status(status_message);
                             completion
@@ -150,13 +168,20 @@ impl App {
             Operation::Create { name, .. } => format!("Creating tag {name}…"),
             Operation::Delete(target) => format!("Deleting tag {}…", target.short_name),
         };
-        let start = self.start_manual_op(OperationKind::ManualAction("tag"), label);
-        start.chain(Task::perform(tag::task::run(path, operation), move |result| {
-            Message::from(TagMessage::Done {
-                operation: operation_for_message.clone(),
-                result,
-            })
-        }))
+        let start = Task::done(Message::Operation(OperationEvent::Started {
+            id: self.operation_tracker.next_id(),
+            kind: OperationKind::ManualAction("tag"),
+            label,
+        }));
+        start.chain(Task::perform(
+            tag::task::run(path, operation),
+            move |result| {
+                Message::from(TagMessage::Done {
+                    operation: operation_for_message.clone(),
+                    result,
+                })
+            },
+        ))
     }
 
     pub(crate) fn suggest_unique_tag_name(&self, mode: TagNameMode) -> String {

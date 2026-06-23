@@ -4,9 +4,11 @@ use iced::Task;
 use crate::features::terminal::{
     self, SessionSelection, TerminalCommand, TerminalEvent, TerminalInput, TerminalTarget,
 };
+use crate::message::OperationEvent;
 use crate::state::{
-    default_terminal_shell, IntegrationStatus, TerminalGridPoint, TerminalImeDeleteAction,
-    TerminalImePreedit, TerminalScreen, TerminalSelection, TerminalStatus,
+    default_terminal_shell, IntegrationStatus, OpResult, OpSeverity, OperationKind,
+    TerminalGridPoint, TerminalImeDeleteAction, TerminalImePreedit, TerminalScreen,
+    TerminalSelection, TerminalStatus,
 };
 use crate::{App, Message};
 
@@ -394,8 +396,20 @@ impl App {
 
     pub(crate) fn open_terminal(&mut self) -> Task<Message> {
         let Some(path) = self.repo.path.clone() else {
-            self.operation.error = Some("Open a repository first.".into());
-            return Task::none();
+            let msg = "Open a repository first.".to_string();
+            let id = self.operation_tracker.next_id();
+            self.operation.error = Some(msg.clone());
+            let start = Task::done(Message::Operation(OperationEvent::Started {
+                id,
+                kind: OperationKind::Custom("terminal_open".to_string()),
+                label: "Opening terminal…".to_string(),
+            }));
+            let complete = Task::done(Message::Operation(OperationEvent::Completed {
+                id,
+                result: OpResult::Failed(msg),
+                severity: OpSeverity::Recoverable,
+            }));
+            return start.chain(complete);
         };
         let label = self
             .repo
@@ -625,7 +639,19 @@ impl App {
 
     fn send_terminal_command(&mut self, command: TerminalCommand) {
         if let Err(message) = terminal::runtime::send(command) {
-            self.operation.error = Some(message);
+            let id = self.operation_tracker.next_id();
+            self.operation.error = Some(message.clone());
+            let start = Task::done(Message::Operation(OperationEvent::Started {
+                id,
+                kind: OperationKind::ManualAction("terminal_send_command"),
+                label: "Sending terminal command…".to_string(),
+            }));
+            let complete = Task::done(Message::Operation(OperationEvent::Completed {
+                id,
+                result: OpResult::Failed(message),
+                severity: OpSeverity::Recoverable,
+            }));
+            let _ = start.chain(complete);
         }
     }
 
