@@ -669,8 +669,8 @@ impl App {
         let detail_ratio = self.preferences.detail_ratio.clamp(0.50, 0.78);
         let panel_width = self.window_width * (1.0 - sidebar_ratio) * detail_ratio;
         let body_height = (crate::widgets::TERMINAL_PANEL_HEIGHT
-            - crate::widgets::TERMINAL_PANEL_CHROME)
-            .max(60.0);
+            - crate::widgets::panel_chrome(&self.terminal))
+        .max(60.0);
         let cols =
             ((panel_width - 64.0) / crate::widgets::TERMINAL_CHAR_WIDTH).clamp(40.0, 240.0) as u16;
         let rows = (body_height / crate::widgets::TERMINAL_LINE_HEIGHT).clamp(6.0, 40.0) as u16;

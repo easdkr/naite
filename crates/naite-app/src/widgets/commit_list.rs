@@ -22,7 +22,7 @@ use crate::icons::IconName;
 
 use super::common::{
     empty_filter_state, empty_state, error_card, format_relative_time, ghost_icon_button,
-    status_summary_title, ErrorRecovery,
+    max_chars_for_width, status_summary_title, truncate_with_ellipsis, ErrorRecovery,
 };
 use super::ROW_HEIGHT;
 
@@ -120,6 +120,7 @@ pub fn commit_list<'a>(props: CommitListProps<'a>) -> Element<'a, Message> {
                     refs,
                     layout,
                     avatars,
+                    list_width,
                 }));
             }
         }
@@ -305,6 +306,7 @@ struct CommitRowProps<'a> {
     refs: &'a Refs,
     layout: CommitListLayout,
     avatars: &'a AvatarCache,
+    list_width: f32,
 }
 
 fn commit_row<'a>(props: CommitRowProps<'a>) -> Element<'a, Message> {
@@ -316,6 +318,7 @@ fn commit_row<'a>(props: CommitRowProps<'a>) -> Element<'a, Message> {
         refs,
         layout,
         avatars,
+        list_width,
     } = props;
 
     let bar_color = if selected {
@@ -364,11 +367,19 @@ fn commit_row<'a>(props: CommitRowProps<'a>) -> Element<'a, Message> {
     .clip(true)
     .into();
 
-    let subject = subject_with_labels(commit, ref_labels, lane_color, selected);
+    let subject = subject_with_labels(
+        commit,
+        ref_labels,
+        lane_color,
+        selected,
+        subject_available_width(list_width, &layout),
+    );
 
     let author: Element<'a, Message> = if layout.show_author {
+        let author_max = max_chars_for_width(AUTHOR_COLUMN_WIDTH);
+        let author_text = truncate_with_ellipsis(&commit.author_name, author_max);
         container(
-            text(commit.author_name.clone())
+            text(author_text)
                 .size(theme::FS_SM)
                 .font(theme::font_regular())
                 .wrapping(Wrapping::None)
@@ -383,8 +394,11 @@ fn commit_row<'a>(props: CommitRowProps<'a>) -> Element<'a, Message> {
     };
 
     let when: Element<'a, Message> = if layout.show_when {
+        let when_max = max_chars_for_width(WHEN_COLUMN_WIDTH);
+        let when_text =
+            truncate_with_ellipsis(&format_relative_time(commit.time_seconds), when_max);
         container(
-            text(format_relative_time(commit.time_seconds))
+            text(when_text)
                 .size(theme::FS_SM)
                 .font(theme::font_regular())
                 .wrapping(Wrapping::None)
@@ -703,13 +717,16 @@ fn subject_with_labels<'a>(
     ref_labels: Vec<GraphRefLabel>,
     lane_color: Color,
     selected: bool,
+    available_width: f32,
 ) -> Element<'a, Message> {
     let subject_font = if selected {
         theme::font_semibold()
     } else {
         theme::font_regular()
     };
-    let subject_text: Element<'a, Message> = text(commit.summary.clone())
+    let subject_max = max_chars_for_width(available_width);
+    let subject_str = truncate_with_ellipsis(&commit.summary, subject_max);
+    let subject_text: Element<'a, Message> = text(subject_str)
         .size(theme::FS_SM)
         .color(color::TEXT)
         .font(subject_font)
@@ -733,6 +750,26 @@ fn subject_with_labels<'a>(
         .center_y(Length::Fixed(ROW_HEIGHT))
         .clip(true)
         .into()
+}
+
+fn subject_available_width(list_width: f32, layout: &CommitListLayout) -> f32 {
+    let chrome_width = 2.0 * theme::SP_MD as f32 + SELECTION_BAR_WIDTH;
+    let fixed_columns = SHA_COLUMN_WIDTH
+        + if layout.show_author {
+            AUTHOR_COLUMN_WIDTH + theme::SP_MD as f32
+        } else {
+            0.0
+        }
+        + if layout.show_when {
+            WHEN_COLUMN_WIDTH + theme::SP_MD as f32
+        } else {
+            0.0
+        };
+    let spacing_count =
+        3.0 + if layout.show_author { 1.0 } else { 0.0 } + if layout.show_when { 1.0 } else { 0.0 };
+    let row_overhead =
+        chrome_width + layout.graph.width + fixed_columns + spacing_count * theme::SP_MD as f32;
+    (list_width - row_overhead).max(0.0)
 }
 
 fn graph_ref_pill<'a>(label: GraphRefLabel, lane_color: Color) -> Element<'a, Message> {

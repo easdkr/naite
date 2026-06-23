@@ -27,10 +27,11 @@ use crate::features::{
 use crate::message::{KeyAction, Message, TabsMessage};
 use crate::state::{
     BranchCreateBase, BranchCreateState, BranchManageRenameState, CommandPaletteState,
-    CommitFormState, DiffViewMode, OperationState, ReleasePrepPhase, ReleasePrepState,
-    RepositoryState, SelectionState, SidebarClickState, SidebarSection, StashBranchState,
-    TagNameMode, TerminalCell, TerminalGridPoint, TerminalImeDeleteAction, TerminalImePreedit,
-    TerminalScreen, TerminalSelection, TerminalStatus, TransientStatus, UndoCheckpoint,
+    CommitFormState, DiffViewMode, OpResult, OpSeverity, OperationKind, OperationState,
+    OperationTracker, ReleasePrepPhase, ReleasePrepState, RepositoryState, SelectionState,
+    SidebarClickState, SidebarSection, StashBranchState, TagNameMode, TerminalCell,
+    TerminalGridPoint, TerminalImeDeleteAction, TerminalImePreedit, TerminalScreen,
+    TerminalSelection, TerminalStatus, TransientStatus, UndoCheckpoint,
 };
 use crate::subscription::{app_event, keyboard_shortcut, terminal_app_event};
 use crate::{
@@ -9177,4 +9178,158 @@ mod release_prep_prepare_baseline {
             "sync failure error should reference the missing remote ref or the formatted sync message; got: {err}"
         );
     }
+}
+// --- Task 5: OperationTracker state model ---
+
+#[test]
+fn operation_tracker_start_moves_op_into_in_flight_with_no_history() {
+    let mut tracker = OperationTracker::default();
+    let id = tracker.start(OperationKind::AutoFetch, "fetch origin");
+
+    assert_eq!(id, 1, "first start should hand out id 1");
+    assert_eq!(tracker.active().len(), 1);
+    assert_eq!(tracker.active()[0].id, id);
+    assert_eq!(tracker.active()[0].label, "fetch origin");
+    assert!(matches!(tracker.active()[0].kind, OperationKind::AutoFetch));
+    assert!(tracker.active()[0].step.is_none());
+    assert_eq!(
+        tracker.recent(usize::MAX).len(),
+        0,
+        "history should be empty before any completion"
+    );
+}
+
+#[test]
+fn operation_tracker_complete_moves_op_into_history_and_empties_in_flight() {
+    let mut tracker = OperationTracker::default();
+    let id = tracker.start(OperationKind::AutoFetch, "fetch origin");
+
+    tracker
+        .complete(id, OpResult::Success, OpSeverity::Recoverable)
+        .expect("complete must succeed for known id");
+
+    assert_eq!(tracker.active().len(), 0);
+    assert_eq!(tracker.recent(usize::MAX).len(), 1);
+    let history = tracker.recent(usize::MAX);
+    assert_eq!(history[0].label, "fetch origin");
+    assert!(matches!(history[0].result, OpResult::Success));
+    assert_eq!(history[0].severity, OpSeverity::Recoverable);
+}
+
+#[test]
+fn operation_tracker_history_is_capped_at_op_history_cap_with_fifo_eviction() {
+    let mut tracker = OperationTracker::default();
+    let total = crate::theme::OP_HISTORY_CAP + 1;
+
+    for index in 0..total {
+        let id = tracker.start(OperationKind::AutoFetch, format!("op-{index}"));
+        tracker
+            .complete(id, OpResult::Success, OpSeverity::Recoverable)
+            .unwrap();
+    }
+
+    let history = tracker.recent(usize::MAX);
+    assert_eq!(history.len(), crate::theme::OP_HISTORY_CAP);
+    assert!(
+        !history.iter().any(|op| op.label == "op-0"),
+        "oldest entry must be evicted when cap is exceeded"
+    );
+    assert!(
+        history.iter().any(|op| op.label == "op-50"),
+        "newest entry must be present after eviction"
+    );
+}
+
+#[test]
+fn operation_tracker_restart_after_complete_does_not_duplicate_in_flight() {
+    let mut tracker = OperationTracker::default();
+
+    let id1 = tracker.start(OperationKind::AutoFetch, "first");
+    tracker
+        .complete(id1, OpResult::Success, OpSeverity::Recoverable)
+        .unwrap();
+
+    let id2 = tracker.start(OperationKind::AutoFetch, "second");
+
+    assert_ne!(id1, id2, "ids must be monotonic — never reused");
+    assert_eq!(tracker.active().len(), 1, "no duplicate in in_flight");
+    assert_eq!(tracker.recent(usize::MAX).len(), 1);
+    assert_eq!(tracker.active()[0].id, id2);
+    assert_eq!(tracker.active()[0].label, "second");
+}
+
+#[test]
+fn operation_tracker_fail_records_completion_with_fatal_severity() {
+    let mut tracker = OperationTracker::default();
+    let id = tracker.start(OperationKind::ManualAction("rebase"), "rebase onto main");
+
+    tracker
+        .fail(id, "merge conflict", OpSeverity::Fatal)
+        .expect("fail must succeed for known id");
+
+    assert_eq!(tracker.active().len(), 0);
+    assert_eq!(tracker.recent(usize::MAX).len(), 1);
+    let completed = &tracker.recent(usize::MAX)[0];
+    assert_eq!(completed.severity, OpSeverity::Fatal);
+    assert_eq!(completed.label, "rebase onto main");
+    match &completed.result {
+        OpResult::Failed(message) => assert_eq!(message, "merge conflict"),
+        OpResult::Success => panic!("fail must record OpResult::Failed"),
+    }
+}
+
+#[test]
+fn operation_tracker_dismiss_removes_completed_op_from_history() {
+    let mut tracker = OperationTracker::default();
+    let id = tracker.start(OperationKind::AutoFetch, "fetch origin");
+    tracker
+        .complete(id, OpResult::Success, OpSeverity::Recoverable)
+        .unwrap();
+    assert_eq!(tracker.recent(usize::MAX).len(), 1);
+
+    tracker
+        .dismiss(id)
+        .expect("dismiss must succeed for id present in history");
+
+    assert_eq!(tracker.recent(usize::MAX).len(), 0);
+}
+
+#[test]
+fn operation_tracker_active_long_running_returns_some_after_threshold() {
+    let mut tracker = OperationTracker::default();
+    let id = tracker.start(OperationKind::AutoFetch, "fetch origin");
+
+    assert!(
+        tracker.active_long_running(0).is_some(),
+        "threshold=0 must always match an in-flight op"
+    );
+    assert!(
+        tracker.active_long_running(u64::MAX).is_none(),
+        "threshold=u64::MAX seconds must never match a just-started op"
+    );
+    assert_eq!(
+        tracker.active_long_running(0).unwrap().id,
+        id,
+        "the matched op must be the one we started"
+    );
+}
+
+#[test]
+fn operation_tracker_complete_unknown_id_returns_error() {
+    let mut tracker = OperationTracker::default();
+
+    let result = tracker.complete(999, OpResult::Success, OpSeverity::Recoverable);
+
+    assert!(result.is_err());
+    assert_eq!(tracker.active().len(), 0);
+    assert_eq!(tracker.recent(usize::MAX).len(), 0);
+}
+
+#[test]
+fn operation_tracker_dismiss_unknown_id_returns_error() {
+    let mut tracker = OperationTracker::default();
+
+    let result = tracker.dismiss(999);
+
+    assert!(result.is_err());
 }

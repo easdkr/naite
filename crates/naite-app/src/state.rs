@@ -1,6 +1,6 @@
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use iced::{keyboard::Modifiers, Point};
 use naite_core::{
@@ -14,6 +14,7 @@ use naite_core::{
 use crate::{
     features::release_prep::ReleasePrepAction,
     features::terminal::{TerminalSessionId, TerminalTarget},
+    theme::OP_HISTORY_CAP,
     BranchDeletePrompt, CheckoutPrompt, DiscardPrompt, ForcePushPrompt, ForceSyncPrompt,
     HistoryPrompt, RebasePrompt, ResetPrompt, StashPrompt, TagDeletePrompt, UndoPrompt,
     WorktreeRemovePrompt,
@@ -157,6 +158,159 @@ pub struct OperationState {
 pub struct TransientStatus {
     pub message: String,
     pub expires_at: Instant,
+}
+
+pub type OperationId = usize;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OperationKind {
+    AutoFetch,
+    ReleasePrep,
+    ManualAction(&'static str),
+    Custom(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OpResult {
+    Success,
+    Failed(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpSeverity {
+    Recoverable,
+    Fatal,
+}
+
+#[derive(Debug, Clone)]
+pub struct ActiveOperation {
+    pub id: OperationId,
+    pub kind: OperationKind,
+    pub label: String,
+    pub started_at: Instant,
+    pub step: Option<(usize, usize)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CompletedOperation {
+    pub id: OperationId,
+    pub kind: OperationKind,
+    pub label: String,
+    pub completed_at: Instant,
+    pub result: OpResult,
+    pub severity: OpSeverity,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OperationTrackerError {
+    UnknownOperation(OperationId),
+}
+
+#[derive(Debug, Default)]
+pub struct OperationTracker {
+    in_flight: Vec<ActiveOperation>,
+    history: VecDeque<CompletedOperation>,
+    next_id: OperationId,
+}
+
+impl OperationTracker {
+    pub fn start(&mut self, kind: OperationKind, label: impl Into<String>) -> OperationId {
+        self.next_id = self.next_id.wrapping_add(1);
+        let id = self.next_id;
+        self.in_flight.push(ActiveOperation {
+            id,
+            kind,
+            label: label.into(),
+            started_at: Instant::now(),
+            step: None,
+        });
+        id
+    }
+
+    pub fn update_step(
+        &mut self,
+        id: OperationId,
+        label: String,
+        current: usize,
+        total: usize,
+    ) -> Result<(), OperationTrackerError> {
+        let op = self
+            .in_flight
+            .iter_mut()
+            .find(|op| op.id == id)
+            .ok_or(OperationTrackerError::UnknownOperation(id))?;
+        op.label = label;
+        op.step = Some((current, total));
+        Ok(())
+    }
+
+    pub fn complete(
+        &mut self,
+        id: OperationId,
+        result: OpResult,
+        severity: OpSeverity,
+    ) -> Result<(), OperationTrackerError> {
+        let pos = self
+            .in_flight
+            .iter()
+            .position(|op| op.id == id)
+            .ok_or(OperationTrackerError::UnknownOperation(id))?;
+        let op = self.in_flight.remove(pos);
+        self.evict_history();
+        self.history.push_back(CompletedOperation {
+            id,
+            kind: op.kind,
+            label: op.label,
+            completed_at: Instant::now(),
+            result,
+            severity,
+        });
+        Ok(())
+    }
+
+    pub fn fail(
+        &mut self,
+        id: OperationId,
+        error_msg: impl Into<String>,
+        severity: OpSeverity,
+    ) -> Result<(), OperationTrackerError> {
+        self.complete(id, OpResult::Failed(error_msg.into()), severity)
+    }
+
+    pub fn dismiss(&mut self, id: OperationId) -> Result<(), OperationTrackerError> {
+        let pos = self
+            .history
+            .iter()
+            .position(|op| op.id == id)
+            .ok_or(OperationTrackerError::UnknownOperation(id))?;
+        self.history.remove(pos);
+        Ok(())
+    }
+
+    pub fn active(&self) -> &[ActiveOperation] {
+        &self.in_flight
+    }
+
+    pub fn recent(&self, n: usize) -> &[CompletedOperation] {
+        if n == 0 || self.history.is_empty() {
+            return &[];
+        }
+        let start = self.history.len().saturating_sub(n);
+        &self.history.as_slices().0[start..]
+    }
+
+    pub fn active_long_running(&self, threshold_secs: u64) -> Option<&ActiveOperation> {
+        let threshold = Duration::from_secs(threshold_secs);
+        self.in_flight
+            .iter()
+            .find(|op| op.started_at.elapsed() >= threshold)
+    }
+
+    fn evict_history(&mut self) {
+        while self.history.len() >= OP_HISTORY_CAP {
+            self.history.pop_front();
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]

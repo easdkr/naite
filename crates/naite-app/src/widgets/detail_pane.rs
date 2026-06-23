@@ -1199,6 +1199,15 @@ fn diff_mode_button<'a>(
     .into()
 }
 
+fn actions_scrollable<'a>(actions: Element<'a, Message>) -> Element<'a, Message> {
+    scrollable(actions)
+        .direction(Direction::Horizontal(
+            Scrollbar::new().width(0).scroller_width(0).margin(0),
+        ))
+        .width(Length::Shrink)
+        .into()
+}
+
 fn file_diff<'a>(
     file: &'a FileChange,
     hunks: Option<&'a [Hunk]>,
@@ -1272,9 +1281,12 @@ fn file_diff<'a>(
                 ]
                 .align_y(Alignment::Center)
                 .spacing(theme::SP_SM),
-                row![Space::with_width(Length::Fill), actions,]
-                    .align_y(Alignment::Center)
-                    .width(Length::Fill),
+                row![
+                    Space::with_width(Length::Fill),
+                    actions_scrollable(actions.into()),
+                ]
+                .align_y(Alignment::Center)
+                .width(Length::Fill),
             ]
             .width(Length::Fill)
             .spacing(theme::SP_XS)

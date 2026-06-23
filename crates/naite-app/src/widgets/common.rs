@@ -178,6 +178,31 @@ fn action_button_width(label: &str) -> f32 {
     action_label_width(label) + 16.0
 }
 
+const CHAR_WIDTH_PX: f32 = 7.0;
+
+pub(super) fn max_chars_for_width(width_px: f32) -> usize {
+    if width_px <= 0.0 {
+        return 0;
+    }
+    ((width_px / CHAR_WIDTH_PX).floor() as usize)
+        .saturating_sub(1)
+        .max(1)
+}
+
+pub(super) fn truncate_with_ellipsis(s: &str, max_chars: usize) -> String {
+    if max_chars == 0 {
+        return String::new();
+    }
+    let char_count = s.chars().count();
+    if char_count <= max_chars {
+        return s.to_string();
+    }
+    let keep = max_chars.saturating_sub(1).max(1);
+    let mut out: String = s.chars().take(keep).collect();
+    out.push('\u{2026}');
+    out
+}
+
 pub(super) fn ghost_icon_button<'a>(icon: IconName, on_press: Message) -> Element<'a, Message> {
     button(icons::icon(icon, 15, color::TEXT_MUTED))
         .padding(Padding::from([4, 6]))

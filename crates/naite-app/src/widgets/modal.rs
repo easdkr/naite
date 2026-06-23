@@ -5,10 +5,11 @@
 //! content. Intended for true blocking flows (multi-field forms); use the
 //! inline cards in `prompts.rs` for lightweight confirmations.
 
-use iced::widget::{container, mouse_area, stack, Space};
+use iced::widget::{container, mouse_area, scrollable, stack, Space};
 use iced::{Background, Border, Element, Length, Padding};
 
-use crate::theme::{self, color};
+use crate::styles;
+use crate::theme::{self, color, MAX_MODAL_HEIGHT};
 use crate::Message;
 
 const MODAL_MAX_WIDTH: f32 = 480.0;
@@ -55,11 +56,16 @@ fn modal_with_progress<'a>(
     .into();
 
     let card_surface: Element<'a, Message> = mouse_area(
-        container(content)
-            .width(Length::Fill)
-            .max_width(max_width)
-            .padding(Padding::from(theme::SP_LG))
-            .style(move |_| card_progress_style(progress)),
+        scrollable(
+            container(content)
+                .width(Length::Fill)
+                .max_width(max_width)
+                .max_height(MAX_MODAL_HEIGHT)
+                .padding(Padding::from(theme::SP_LG))
+                .style(move |_| card_progress_style(progress)),
+        )
+        .direction(styles::thin_scrollbar_dir())
+        .style(styles::thin_scrollbar),
     )
     .on_press(Message::NoOp)
     .into();

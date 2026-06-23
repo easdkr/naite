@@ -50,8 +50,8 @@ pub use sidebar::{sidebar, SidebarProps};
 #[cfg(test)]
 pub(crate) use terminal::split_ime_preedit_at_cursor as terminal_split_ime_preedit_at_cursor;
 pub use terminal::{
-    terminal_panel, TERMINAL_CHAR_WIDTH, TERMINAL_LINE_HEIGHT, TERMINAL_PANEL_CHROME,
-    TERMINAL_PANEL_HEIGHT, TERMINAL_PANEL_HEIGHT_MINIMIZED,
+    panel_chrome, terminal_panel, TERMINAL_CHAR_WIDTH, TERMINAL_LINE_HEIGHT, TERMINAL_PANEL_HEIGHT,
+    TERMINAL_PANEL_HEIGHT_MINIMIZED,
 };
 pub use toolbar::{toolbar, ToolbarProps};
 pub use workspace::workspace_dashboard;
