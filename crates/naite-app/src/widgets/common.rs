@@ -234,14 +234,45 @@ pub(super) fn truncate_with_ellipsis(s: &str, max_chars: usize) -> String {
     if max_chars == 0 {
         return String::new();
     }
-    let char_count = s.chars().count();
-    if char_count <= max_chars {
+    let total_width: usize = s.chars().map(display_width).sum();
+    if total_width <= max_chars {
         return s.to_string();
     }
-    let keep = max_chars.saturating_sub(1).max(1);
-    let mut out: String = s.chars().take(keep).collect();
+    let mut width = 0usize;
+    let mut out: String = s
+        .chars()
+        .take_while(|ch| {
+            let units = display_width(*ch);
+            if width + units > max_chars.saturating_sub(1) {
+                return false;
+            }
+            width += units;
+            true
+        })
+        .collect();
     out.push('\u{2026}');
     out
+}
+
+fn display_width(ch: char) -> usize {
+    match ch as u32 {
+        0x1100..=0x115F
+        | 0x2329..=0x232A
+        | 0x2E80..=0x303E
+        | 0x3041..=0x33FF
+        | 0x3400..=0x4DBF
+        | 0x4E00..=0x9FFF
+        | 0xA000..=0xA4CF
+        | 0xAC00..=0xD7A3
+        | 0xF900..=0xFAFF
+        | 0xFE10..=0xFE19
+        | 0xFE30..=0xFE6F
+        | 0xFF00..=0xFF60
+        | 0xFFE0..=0xFFE6
+        | 0x20000..=0x2FFFD
+        | 0x30000..=0x3FFFD => 2,
+        _ => 1,
+    }
 }
 
 pub(super) fn ghost_icon_button<'a>(icon: IconName, on_press: Message) -> Element<'a, Message> {
@@ -302,6 +333,24 @@ fn pluralized_count(count: usize, singular: &str, plural: &str) -> String {
     }
 }
 
+pub(crate) fn format_duration_ago(diff_secs: i64) -> String {
+    if diff_secs < 60 {
+        "just now".into()
+    } else if diff_secs < 3600 {
+        format!("{} min ago", diff_secs / 60)
+    } else if diff_secs < 86_400 {
+        format!("{} hr ago", diff_secs / 3600)
+    } else if diff_secs < 604_800 {
+        format!("{} d ago", diff_secs / 86_400)
+    } else if diff_secs < 2_592_000 {
+        format!("{} w ago", diff_secs / 604_800)
+    } else if diff_secs < 31_536_000 {
+        format!("{} mo ago", diff_secs / 2_592_000)
+    } else {
+        format!("{} y ago", diff_secs / 31_536_000)
+    }
+}
+
 pub(super) fn format_relative_time(secs: i64) -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -310,22 +359,7 @@ pub(super) fn format_relative_time(secs: i64) -> String {
         .map(|d| d.as_secs() as i64)
         .unwrap_or(secs);
     let diff = (now_secs - secs).max(0);
-
-    if diff < 60 {
-        "just now".into()
-    } else if diff < 3600 {
-        format!("{} min ago", diff / 60)
-    } else if diff < 86_400 {
-        format!("{} hr ago", diff / 3600)
-    } else if diff < 604_800 {
-        format!("{} d ago", diff / 86_400)
-    } else if diff < 2_592_000 {
-        format!("{} w ago", diff / 604_800)
-    } else if diff < 31_536_000 {
-        format!("{} mo ago", diff / 2_592_000)
-    } else {
-        format!("{} y ago", diff / 31_536_000)
-    }
+    format_duration_ago(diff)
 }
 
 const PROGRESS_TRACK_WIDTH: f32 = 320.0;

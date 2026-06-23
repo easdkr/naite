@@ -21,7 +21,7 @@ use crate::message::OperationEvent;
 use crate::state::{CompletedOperation, OpResult, OpSeverity, OperationId, OperationTracker};
 use crate::styles;
 use crate::theme::{self, color};
-use crate::widgets::common::spinner_frame;
+use crate::widgets::common::{format_duration_ago, spinner_frame, truncate_with_ellipsis};
 use crate::Message;
 
 /// Render the top status bar.
@@ -109,7 +109,7 @@ const ERROR_TEXT_MAX_CHARS: usize = 64;
 /// `Element`. `Task 19` will route the `OperationEvent::Dismissed`
 /// message to `tracker.dismiss(id)`.
 pub fn bottom_status_bar<'a>(tracker: &'a OperationTracker) -> Element<'a, Message> {
-    let visible = visible_recent(tracker.recent(BOTTOM_BAR_RECENT));
+    let visible = visible_recent(&tracker.recent(BOTTOM_BAR_RECENT));
 
     if visible.is_empty() {
         // Nothing to surface — reserve the slot height to avoid UI jump
@@ -138,8 +138,13 @@ pub fn bottom_status_bar<'a>(tracker: &'a OperationTracker) -> Element<'a, Messa
 }
 
 /// Newest-first, Fatal-filtered view of the tracker's recent history.
-fn visible_recent(recent: &[CompletedOperation]) -> Vec<&CompletedOperation> {
-    recent.iter().rev().filter(|op| !is_fatal(op)).collect()
+fn visible_recent<'a>(recent: &[&'a CompletedOperation]) -> Vec<&'a CompletedOperation> {
+    recent
+        .iter()
+        .rev()
+        .copied()
+        .filter(|op| !is_fatal(op))
+        .collect()
 }
 
 fn is_fatal(op: &CompletedOperation) -> bool {
@@ -233,35 +238,11 @@ fn truncate_error(msg: &str) -> String {
     if cleaned.is_empty() {
         return "(no detail)".into();
     }
-    if cleaned.chars().count() <= ERROR_TEXT_MAX_CHARS {
-        return cleaned.to_string();
-    }
-    let mut out: String = cleaned
-        .chars()
-        .take(ERROR_TEXT_MAX_CHARS.saturating_sub(1))
-        .collect();
-    out.push('\u{2026}');
-    out
+    truncate_with_ellipsis(cleaned, ERROR_TEXT_MAX_CHARS)
 }
 
-/// Format an `Instant` as a human-readable "X ago" string using
-/// `Instant::elapsed()` so we don't need a wall-clock anchor (which
-/// `CompletedOperation.completed_at` does not carry). Mirrors the
-/// buckets of `widgets::common::format_relative_time` but uses the
-/// monotonic clock as the source of truth.
 fn format_instant_ago(instant: Instant) -> String {
-    let secs = instant.elapsed().as_secs() as i64;
-    if secs < 60 {
-        "just now".into()
-    } else if secs < 3_600 {
-        format!("{} min ago", secs / 60)
-    } else if secs < 86_400 {
-        format!("{} hr ago", secs / 3_600)
-    } else if secs < 604_800 {
-        format!("{} d ago", secs / 86_400)
-    } else {
-        format!("{} wk ago", secs / 604_800)
-    }
+    format_duration_ago(instant.elapsed().as_secs() as i64)
 }
 
 #[cfg(test)]
@@ -293,7 +274,7 @@ mod tests {
             .fail(recoverable_id, "conflict", OpSeverity::Recoverable)
             .unwrap();
 
-        let visible = visible_recent(tracker.recent(BOTTOM_BAR_RECENT));
+        let visible = visible_recent(&tracker.recent(BOTTOM_BAR_RECENT));
         assert_eq!(visible.len(), 2, "fatal entry must be filtered out");
         assert!(visible.iter().all(|op| !is_fatal(op)));
     }
