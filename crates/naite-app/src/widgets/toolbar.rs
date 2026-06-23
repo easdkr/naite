@@ -118,14 +118,7 @@ pub fn toolbar<'a>(props: ToolbarProps<'a>) -> Element<'a, Message> {
         Space::new(0.0, 0.0).into()
     };
 
-    let status: Element<'a, Message> = if loading {
-        text("Loading...")
-            .size(theme::FS_SM)
-            .font(theme::font_regular())
-            .wrapping(Wrapping::None)
-            .color(color::TEXT_MUTED)
-            .into()
-    } else if let Some(message) = transient_status {
+    let status: Element<'a, Message> = if let Some(message) = transient_status {
         container(
             text(message.to_string())
                 .size(theme::FS_SM)

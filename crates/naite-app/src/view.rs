@@ -199,6 +199,10 @@ impl App {
         .height(Length::Fill);
 
         let mut root = column![toolbar].width(Length::Fill).height(Length::Fill);
+        root = root.push(widgets::top_status_bar(
+            &self.operation_tracker,
+            self.status_animation_frame,
+        ));
 
         if self.preferences.display_options_open {
             root = root.push(widgets::display_options_panel(&self.preferences));
@@ -261,6 +265,7 @@ impl App {
         }
 
         root = root.push(container(pane_grid).height(Length::Fill));
+        root = root.push(widgets::bottom_status_bar(&self.operation_tracker));
 
         let base: Element<'_, Message> = root.into();
 
@@ -438,6 +443,16 @@ impl App {
             layered = layered.push(overlay);
         }
         layered = layered.push(context_menu_overlay);
+        // Toast layer + progress overlay are the topmost surfaces; they
+        // sit above modals/context menus so users always see completion
+        // feedback regardless of what modal is open. The overlay trigger
+        // threshold (currently 0 = always) is tightened by Task 20 to
+        // `OVERLAY_TRIGGER_SECS` so only long-running ops surface the
+        // overlay card.
+        layered = layered.push(widgets::toast_layer(&self.toasts));
+        if let Some(op) = self.operation_tracker.active_long_running(0) {
+            layered = layered.push(widgets::progress_overlay(op, self.status_animation_frame));
+        }
         layered.into()
     }
 }

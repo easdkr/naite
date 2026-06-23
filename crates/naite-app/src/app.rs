@@ -9,11 +9,11 @@ use crate::features::history;
 use crate::features::rebase::{InteractiveRebaseSession, RebaseApplyMode};
 use crate::state::{
     AvatarCache, BranchCreateBase, BranchCreateState, BranchManageRenameState, CommandPaletteState,
-    CommitFormState, FileInsightState, GitHubIssuesState, HistoryRewordState, OperationState,
-    OperationTracker, PreferencesState, PullRequestsState, ReleasePrepState, RepositoryCatalog,
-    RepositoryManagerState, RepositoryState, RepositoryTabsState, SelectionState, SidebarState,
-    StashBranchState, StashCreateState, TagCreateState, TerminalState, UndoCheckpoint,
-    WorkspaceState, WorktreeCreateState,
+    CommitFormState, FileInsightState, GitHubIssuesState, HistoryRewordState, OperationId,
+    OperationState, OperationTracker, PreferencesState, PullRequestsState, ReleasePrepState,
+    RepositoryCatalog, RepositoryManagerState, RepositoryState, RepositoryTabsState,
+    SelectionState, SidebarState, StashBranchState, StashCreateState, TagCreateState,
+    TerminalState, UndoCheckpoint, WorkspaceState, WorktreeCreateState,
 };
 use crate::widgets::Toast;
 
@@ -87,6 +87,19 @@ pub struct App {
     /// them here. Consumed by `widgets/status_bar` for the top + bottom
     /// status bars.
     pub(crate) operation_tracker: OperationTracker,
+    /// Monotonically increasing animation counter shared by the top status
+    /// bar's spinner glyph and the central progress overlay's moving bar.
+    /// Initialized to 0 and bumped by an 80ms subscription tick (Task 20
+    /// wires the increment). Both widgets index their frame strings off this
+    /// counter so a single tick drives both animations.
+    pub(crate) status_animation_frame: usize,
+    /// `OperationId` currently driving the central progress overlay, if
+    /// any. Recomputed on every `Message::TransientStatusTick` via
+    /// `OperationTracker::should_show_overlay(OVERLAY_TRIGGER_SECS)` —
+    /// ReleasePrep shows immediately, everything else waits 2s. View
+    /// looks the op up by id in `operation_tracker.active()` so a stale
+    /// id never survives a completion between tick and render.
+    pub(crate) overlay_visible: Option<OperationId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -413,6 +426,8 @@ impl App {
             provider_cli_notice_shown: false,
             toasts: Vec::new(),
             operation_tracker: OperationTracker::default(),
+            status_animation_frame: 0,
+            overlay_visible: None,
         }
     }
     pub(crate) fn visible_commit_indices(&self) -> Vec<usize> {

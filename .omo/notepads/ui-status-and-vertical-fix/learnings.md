@@ -755,3 +755,132 @@ Total new warnings introduced by Task 15: 5. All pre-positioned for Task 20 (cen
 
 ### Evidence
 - `.omo/evidence/task-15-overlay-build.txt` — `cargo build` + `cargo test` + `cargo fmt --check` summary.
+
+## Task 18 — auto_fetch + release_prep OperationTracker migration (Wave 3, 2026-06-23)
+
+### Pattern established for Task 22 (~60 ManualAction sites)
+
+The Elm-style routing for OperationEvent:
+
+```rust
+// At the START site (within the feature guard that prevents duplicate in-flight ops):
+let start = Task::done(Message::Operation(OperationEvent::Started {
+    id: self.operation_tracker.next_id(),
+    kind: OperationKind::ManualAction("<feature>"),
+    label: "<human label>".to_string(),
+}));
+return start.chain(Task::perform(async_work, |result| /* wrap */));
+
+// At the COMPLETION site (where the result message arrives):
+let completion = match result {
+    Ok(()) => Message::Operation(OperationEvent::Completed {
+        id: self.operation_tracker.current_id_for(&OperationKind::ManualAction("<feature>")).unwrap(),
+        result: OpResult::Success,
+        severity: OpSeverity::Recoverable,
+    }),
+    Err(msg) => Message::Operation(OperationEvent::Completed {
+        id: self.operation_tracker.current_id_for(&OperationKind::ManualAction("<feature>")).unwrap(),
+        result: OpResult::Failed(msg),
+        severity: OpSeverity::Recoverable,
+    }),
+};
+Task::done(completion).chain(next_step)
+```
+
+The `OperationTracker::current_id_for(kind)` lookup closes the cross-handler
+id gap (start site doesn't have the id available at the completion site
+because the async task result returns on a different message path).
+
+### State additions made
+
+- `OperationKind` now derives `Hash` (needed for `HashMap<OperationKind, OperationId>` key).
+- `OperationTracker.current: HashMap<OperationKind, OperationId>` tracks the
+  most recent in-flight id keyed by kind. The invariant (at most one
+  in-flight op per kind) is enforced by feature guards
+  (`if self.operation.loading { return Task::none(); }`).
+- `OperationTracker::next_id()` peeks without starting.
+- `OperationTracker::start_with_id(id, kind, label)` consumes an explicit id
+  (the wire-format path through `Message::Operation`).
+- `OperationTracker::current_id_for(kind)` is the cross-handler lookup.
+- `OperationTracker::should_show_overlay(threshold_secs)` is the
+  `ReleasePrep`-vs-everything-else split for the central overlay.
+
+### Schema field additions
+
+- `OperationState.fatal_error: Option<String>` was already needed by the
+  pre-existing partial migration (rebase fatal validation). Added so
+  the build compiles.
+- `App.overlay_visible: Option<OperationId>` was already needed by the
+  pre-existing partial migration (subscription.rs / view.rs). Re-added.
+
+### Per-step events
+
+For `PrepareStepStarted(step)` and `PrepareStepDone { step, result }`:
+
+```rust
+ReleasePrepMessage::PrepareStepStarted(step) => {
+    self.release_prep.preparing_step = Some(step);
+    Task::done(self.step_progressed_event(step))
+}
+ReleasePrepMessage::PrepareStepDone { step, result } => {
+    self.release_prep.completed_preparing_steps.push(step);
+    self.release_prep.preparing_step = None;
+    match *result {
+        Ok(_) => Task::done(self.step_progressed_event(step)),
+        Err(message) => Task::done(self.step_failed_event(step, &message)),
+    }
+}
+```
+
+`step_progressed_event` builds `StepProgressed { id, label, current, total }`.
+The label flips from "<step name>" to "<step name> done" once `Done` arrives,
+so the status bar text reflects the most recent transition.
+
+### Why `current_id_for` instead of stashing the id
+
+The naive approach would be to stash the id on `OperationState` (e.g.
+`auto_fetch_op_id: Option<OperationId>`). That's tightly coupled and
+requires a new field per kind. The `HashMap<OperationKind, OperationId>`
+in `OperationTracker` is cleaner: it scales to any new kind without a
+field change, and the invariant (one in-flight per kind) is enforced
+by the existing feature guards.
+
+### Test results
+
+- 388 naite-app tests + 265 naite-core tests + 0 doc tests = 653 passed, 0 failed.
+- Wave 1 Task 3's 4 baseline tests still pass:
+  - release_prep_prepare_baseline_busy_operation
+  - release_prep_prepare_baseline_dirty_worktree
+  - release_prep_prepare_baseline_sync_failure
+  - release_prep_prepare_baseline_success
+
+### Pre-existing build state when this task started
+
+The working tree had an incomplete partial migration from a previous
+session (rebase/update.rs and release_prep/update.rs renamed `error` to
+`fatal_error`, subscription.rs and view.rs referenced `overlay_visible`),
+but the missing fields/methods (`fatal_error` on OperationState,
+`overlay_visible` on App, `should_show_overlay` on OperationTracker)
+were not added. The build was broken before this task started. Adding
+those missing fields/methods was required to make the build compile,
+even though they're not strictly part of the auto_fetch/release_prep
+migration.
+
+### Pre-existing clippy errors not introduced by this task
+
+- `animated_dots`, `ease_in_out_sine`, `moving_progress_bar`, `spinner_frame`
+  unused imports in widgets/mod.rs:31
+- `MAX_VISIBLE`, `ToastSeverity` unused imports in widgets/mod.rs:61
+- `CompletedOperation.kind` field never read
+- `OperationTracker::start` and `OperationTracker::fail` methods never used
+  (start was already unused — features go through Started event)
+- `ToastSeverity::Success` / `ToastSeverity::Failure` variants never
+  constructed
+- `Toast::success` / `Toast::failure` associated functions never used
+- needless `'a` lifetime in status_bar.rs:141
+
+All pre-existing. None caused by this task.
+
+### Evidence
+
+- `.omo/evidence/task-18-migration-build.txt` — full build + test summary.
