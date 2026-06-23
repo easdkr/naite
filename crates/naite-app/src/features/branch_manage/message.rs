@@ -11,6 +11,7 @@ pub enum Message {
     DeleteRequested(BranchDeleteTarget),
     DeleteMatchingLocalBranchesToggled(bool),
     DeleteLinkedWorktreesToggled(bool),
+    DeleteForceLinkedWorktreesToggled(bool),
     DeleteCancelled,
     DeleteConfirmed,
     Done {
@@ -29,6 +30,7 @@ pub enum Operation {
         target: BranchDeleteTarget,
         delete_matching_local_branches: bool,
         delete_linked_worktrees: bool,
+        force_linked_worktrees: bool,
         linked_worktrees: Vec<crate::LinkedWorktreeDeleteTarget>,
     },
 }
@@ -43,6 +45,7 @@ impl Operation {
                 target,
                 delete_matching_local_branches,
                 delete_linked_worktrees,
+                force_linked_worktrees: _,
                 linked_worktrees,
             } => {
                 let mut suffix = String::new();

@@ -113,6 +113,7 @@ pub struct BranchDeletePrompt {
     pub delete_matching_local_branches: bool,
     pub matching_local_branches: Vec<String>,
     pub delete_linked_worktrees: bool,
+    pub force_linked_worktrees: bool,
     pub linked_worktrees: Vec<LinkedWorktreeDeleteTarget>,
 }
 
@@ -150,6 +151,7 @@ impl BranchDeleteTarget {
 pub struct LinkedWorktreeDeleteTarget {
     pub branch: String,
     pub path: std::path::PathBuf,
+    pub dirty: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -223,6 +225,7 @@ pub enum UndoPromptAction {
 pub struct WorktreeRemovePrompt {
     pub target: WorktreeSummary,
     pub delete_branch: bool,
+    pub force: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

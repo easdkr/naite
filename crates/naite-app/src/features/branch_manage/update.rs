@@ -33,6 +33,12 @@ impl App {
                 }
                 Task::none()
             }
+            BranchManageMessage::DeleteForceLinkedWorktreesToggled(checked) => {
+                if let Some(prompt) = &mut self.selection.branch_delete_confirmation {
+                    prompt.force_linked_worktrees = checked;
+                }
+                Task::none()
+            }
             BranchManageMessage::DeleteCancelled => {
                 self.selection.branch_delete_confirmation = None;
                 Task::none()
@@ -51,6 +57,7 @@ impl App {
                     target: prompt.target,
                     delete_matching_local_branches: prompt.delete_matching_local_branches,
                     delete_linked_worktrees: prompt.delete_linked_worktrees,
+                    force_linked_worktrees: prompt.force_linked_worktrees,
                     linked_worktrees: prompt.linked_worktrees,
                 })
             }
@@ -143,6 +150,7 @@ impl App {
             delete_matching_local_branches: false,
             matching_local_branches,
             delete_linked_worktrees: false,
+            force_linked_worktrees: false,
             linked_worktrees,
         });
         Task::none()
@@ -229,6 +237,7 @@ impl App {
                     crate::LinkedWorktreeDeleteTarget {
                         branch: branch.clone(),
                         path: worktree.path.clone(),
+                        dirty: worktree.dirty,
                     }
                 })
             })

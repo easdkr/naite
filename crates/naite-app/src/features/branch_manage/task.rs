@@ -17,11 +17,16 @@ pub(crate) async fn run(path: PathBuf, operation: Operation) -> Result<(), Strin
                 target,
                 delete_matching_local_branches,
                 delete_linked_worktrees,
+                force_linked_worktrees,
                 linked_worktrees,
             } => match target {
                 BranchDeleteTarget::LocalBranch(target) => {
-                    let removed_branches =
-                        remove_linked_worktrees(&repo, delete_linked_worktrees, linked_worktrees)?;
+                    let removed_branches = remove_linked_worktrees(
+                        &repo,
+                        delete_linked_worktrees,
+                        force_linked_worktrees,
+                        linked_worktrees,
+                    )?;
                     if removed_branches.contains(&target.short_name) {
                         Ok(())
                     } else {
@@ -30,8 +35,12 @@ pub(crate) async fn run(path: PathBuf, operation: Operation) -> Result<(), Strin
                     }
                 }
                 BranchDeleteTarget::LocalBranches { branches, .. } => {
-                    let removed_branches =
-                        remove_linked_worktrees(&repo, delete_linked_worktrees, linked_worktrees)?;
+                    let removed_branches = remove_linked_worktrees(
+                        &repo,
+                        delete_linked_worktrees,
+                        force_linked_worktrees,
+                        linked_worktrees,
+                    )?;
                     let branch_names = branches
                         .into_iter()
                         .map(|branch| branch.short_name)
@@ -61,6 +70,7 @@ pub(crate) async fn run(path: PathBuf, operation: Operation) -> Result<(), Strin
 fn remove_linked_worktrees(
     repo: &Repository,
     delete_linked_worktrees: bool,
+    force_linked_worktrees: bool,
     linked_worktrees: Vec<crate::LinkedWorktreeDeleteTarget>,
 ) -> Result<BTreeSet<String>, String> {
     let mut removed_branches = BTreeSet::new();
@@ -69,7 +79,7 @@ fn remove_linked_worktrees(
     }
 
     for worktree in linked_worktrees {
-        repo.remove_worktree(&worktree.path, true)
+        repo.remove_worktree(&worktree.path, true, force_linked_worktrees)
             .map_err(|e| e.to_string())?;
         removed_branches.insert(worktree.branch);
     }

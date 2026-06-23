@@ -15,10 +15,11 @@ pub(crate) async fn remove(
     repo_path: PathBuf,
     target_path: PathBuf,
     delete_branch: bool,
+    force: bool,
 ) -> Result<(), String> {
     tokio::task::spawn_blocking(move || -> Result<_, String> {
         let repo = Repository::open(&repo_path).map_err(|e| e.to_string())?;
-        repo.remove_worktree(target_path, delete_branch)
+        repo.remove_worktree(target_path, delete_branch, force)
             .map_err(|e| e.to_string())
     })
     .await

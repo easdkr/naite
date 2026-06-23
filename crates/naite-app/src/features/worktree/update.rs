@@ -54,12 +54,19 @@ impl App {
                 self.selection.worktree_remove_confirmation = Some(WorktreeRemovePrompt {
                     target,
                     delete_branch: false,
+                    force: false,
                 });
                 Task::none()
             }
             worktree::Message::RemoveDeleteBranchToggled(delete_branch) => {
                 if let Some(prompt) = &mut self.selection.worktree_remove_confirmation {
                     prompt.delete_branch = delete_branch;
+                }
+                Task::none()
+            }
+            worktree::Message::RemoveForceToggled(force) => {
+                if let Some(prompt) = &mut self.selection.worktree_remove_confirmation {
+                    prompt.force = force;
                 }
                 Task::none()
             }
@@ -153,7 +160,12 @@ impl App {
         self.operation.loading = true;
         self.operation.error = None;
         Task::perform(
-            worktree::task::remove(repo_path, prompt.target.path, prompt.delete_branch),
+            worktree::task::remove(
+                repo_path,
+                prompt.target.path,
+                prompt.delete_branch,
+                prompt.force,
+            ),
             |result| Message::from(worktree::Message::RemoveDone(result)),
         )
     }
