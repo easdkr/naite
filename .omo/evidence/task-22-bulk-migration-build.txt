@@ -1,0 +1,27 @@
+      30
+=== Task 22: Bulk Migration Evidence ===
+Date: 2026-06-23T11:32:41Z
+Build target: cargo build -p naite-app
+Test target: cargo test --workspace --locked
+
+=== Event counts ===
+OperationEvent::Started { sites in features/: 72
+OperationEvent::Completed { sites in features/: 66
+
+=== operation.loading kept (per spec - gradual migration) ===
+operation.loading = true remaining: 57
+operation.loading = false remaining: 30
+operation.error = Some remaining: 46
+
+=== Build result ===
+   Compiling naite-app v0.1.0 (/Users/june/workspace/personal/naite/crates/naite-app)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 9.50s
+
+=== Test totals ===
+test result: ok. 393 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.40s
+test result: ok. 265 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.68s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+=== Baseline tests (release_prep_prepare_baseline_*) ===
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 389 filtered out; finished in 1.22s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 265 filtered out; finished in 0.00s

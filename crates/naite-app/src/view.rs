@@ -102,13 +102,16 @@ impl App {
                             * (1.0 - self.preferences.sidebar_ratio.clamp(0.14, 0.36))
                             * self.preferences.detail_ratio.clamp(0.50, 0.78);
                         let error_recovery = self.error_recovery_action();
+                        let fatal_error = self.operation.fatal_error.as_deref().or_else(|| {
+                            error_recovery.as_ref().and(self.operation.error.as_deref())
+                        });
                         let commit_list = widgets::commit_list(widgets::CommitListProps {
                             commits: &self.repo.commits,
                             visible_indices,
                             selected: self.selected_index(),
                             wip_selected: self.selection.selected_wip,
                             status_detail: &self.repo.status_detail,
-                            error: self.operation.error.as_deref(),
+                            fatal_error,
                             error_recovery,
                             graph_layout: &self.repo.graph_layout,
                             refs: &self.repo.refs,
@@ -199,6 +202,10 @@ impl App {
         .height(Length::Fill);
 
         let mut root = column![toolbar].width(Length::Fill).height(Length::Fill);
+        root = root.push(widgets::top_status_bar(
+            &self.operation_tracker,
+            self.status_animation_frame,
+        ));
 
         if self.preferences.display_options_open {
             root = root.push(widgets::display_options_panel(&self.preferences));
@@ -261,6 +268,7 @@ impl App {
         }
 
         root = root.push(container(pane_grid).height(Length::Fill));
+        root = root.push(widgets::bottom_status_bar(&self.operation_tracker));
 
         let base: Element<'_, Message> = root.into();
 
@@ -438,6 +446,24 @@ impl App {
             layered = layered.push(overlay);
         }
         layered = layered.push(context_menu_overlay);
+        // Toast layer + progress overlay are the topmost surfaces; they
+        // sit above modals/context menus so users always see completion
+        // feedback regardless of what modal is open. Overlay visibility
+        // is computed in update.rs on every TransientStatusTick
+        // (ReleasePrep shows immediately, everything else waits
+        // OVERLAY_TRIGGER_SECS). The id is looked up by
+        // active().iter().find() so a stale id (op completed between
+        // tick and render) silently resolves to None rather than
+        // dereferencing a freed reference.
+        layered = layered.push(widgets::toast_layer(&self.toasts));
+        if let Some(op) = self.overlay_visible.and_then(|id| {
+            self.operation_tracker
+                .active()
+                .iter()
+                .find(|op| op.id == id)
+        }) {
+            layered = layered.push(widgets::progress_overlay(op, self.status_animation_frame));
+        }
         layered.into()
     }
 }

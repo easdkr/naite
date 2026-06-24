@@ -5,6 +5,8 @@ use iced::Task;
 use naite_core::{WorktreeAdd, WorktreeSummary};
 
 use crate::features::{repo_open, worktree};
+use crate::message::OperationEvent;
+use crate::state::{OpResult, OpSeverity, OperationKind};
 use crate::{App, Message, WorktreeRemovePrompt};
 
 impl App {
@@ -44,12 +46,16 @@ impl App {
             worktree::Message::CreateDone(result) => self.finish_worktree_create(result),
             worktree::Message::RemoveRequested(target) => {
                 if target.is_current {
-                    self.operation.error = Some("Cannot remove the current worktree.".into());
-                    return Task::none();
+                    return self.worktree_validation_failure(
+                        OperationKind::ManualAction("worktree_remove"),
+                        "Cannot remove the current worktree.".to_string(),
+                    );
                 }
                 if target.locked {
-                    self.operation.error = Some("Unlock the worktree before removing it.".into());
-                    return Task::none();
+                    return self.worktree_validation_failure(
+                        OperationKind::ManualAction("worktree_remove"),
+                        "Unlock the worktree before removing it.".to_string(),
+                    );
                 }
                 self.selection.worktree_remove_confirmation = Some(WorktreeRemovePrompt {
                     target,
@@ -75,18 +81,44 @@ impl App {
                 Task::none()
             }
             worktree::Message::RemoveConfirmed => self.start_worktree_remove(),
-            worktree::Message::RemoveDone(result) => {
-                self.finish_worktree_mutation(result, "Removed worktree".into())
-            }
+            worktree::Message::RemoveDone(result) => self.finish_worktree_mutation(
+                &OperationKind::ManualAction("worktree_remove"),
+                result,
+                "Removed worktree".into(),
+            ),
             worktree::Message::LockRequested(target) => self.start_worktree_lock(target),
-            worktree::Message::LockDone(result) => {
-                self.finish_worktree_mutation(result, "Locked worktree".into())
-            }
+            worktree::Message::LockDone(result) => self.finish_worktree_mutation(
+                &OperationKind::ManualAction("worktree_lock"),
+                result,
+                "Locked worktree".into(),
+            ),
             worktree::Message::UnlockRequested(target) => self.start_worktree_unlock(target),
-            worktree::Message::UnlockDone(result) => {
-                self.finish_worktree_mutation(result, "Unlocked worktree".into())
-            }
+            worktree::Message::UnlockDone(result) => self.finish_worktree_mutation(
+                &OperationKind::ManualAction("worktree_unlock"),
+                result,
+                "Unlocked worktree".into(),
+            ),
         }
+    }
+
+    fn worktree_validation_failure(
+        &mut self,
+        kind: OperationKind,
+        message: String,
+    ) -> Task<Message> {
+        let id = self.operation_tracker.next_id();
+        self.operation.error = Some(message.clone());
+        let start = Task::done(Message::Operation(OperationEvent::Started {
+            id,
+            kind,
+            label: "Validating worktree operation…".to_string(),
+        }));
+        let complete = Task::done(Message::Operation(OperationEvent::Completed {
+            id,
+            result: OpResult::Failed(message),
+            severity: OpSeverity::Recoverable,
+        }));
+        start.chain(complete)
     }
 
     pub(crate) fn open_worktree_create(&mut self) -> Task<Message> {
@@ -114,8 +146,10 @@ impl App {
         let path = self.worktree_create.path.trim();
         let start_point = self.worktree_create.start_point.trim();
         if path.is_empty() || start_point.is_empty() {
-            self.operation.error = Some("Enter a worktree path and start point.".into());
-            return Task::none();
+            return self.worktree_validation_failure(
+                OperationKind::ManualAction("worktree_create"),
+                "Enter a worktree path and start point.".to_string(),
+            );
         }
 
         let add = WorktreeAdd {
@@ -126,22 +160,48 @@ impl App {
         };
         self.operation.loading = true;
         self.operation.error = None;
-        Task::perform(worktree::task::add(repo_path, add), |result| {
-            Message::from(worktree::Message::CreateDone(result))
-        })
+        let label = format!("Creating worktree at {}…", path);
+        let start = Task::done(Message::Operation(OperationEvent::Started {
+            id: self.operation_tracker.next_id(),
+            kind: OperationKind::ManualAction("worktree_create"),
+            label,
+        }));
+        start.chain(Task::perform(
+            worktree::task::add(repo_path, add),
+            |result| Message::from(worktree::Message::CreateDone(result)),
+        ))
     }
 
     fn finish_worktree_create(&mut self, result: Result<PathBuf, String>) -> Task<Message> {
+        let kind = OperationKind::ManualAction("worktree_create");
+        let completion = match self.operation_tracker.current_id_for(&kind) {
+            Some(id) => {
+                let event = match &result {
+                    Ok(_) => OperationEvent::Completed {
+                        id,
+                        result: OpResult::Success,
+                        severity: OpSeverity::Recoverable,
+                    },
+                    Err(message) => OperationEvent::Completed {
+                        id,
+                        result: OpResult::Failed(message.clone()),
+                        severity: OpSeverity::Recoverable,
+                    },
+                };
+                Task::done(Message::Operation(event))
+            }
+            None => Task::none(),
+        };
         self.operation.loading = false;
         match result {
             Ok(path) => {
                 self.worktree_create.open = false;
                 self.set_transient_status(format!("Created worktree at {}", path.display()));
-                self.reload_current_repo()
+                completion.chain(self.reload_current_repo())
             }
             Err(msg) => {
                 self.operation.error = Some(msg);
-                Task::none()
+                completion
             }
         }
     }
@@ -159,7 +219,12 @@ impl App {
 
         self.operation.loading = true;
         self.operation.error = None;
-        Task::perform(
+        let start = Task::done(Message::Operation(OperationEvent::Started {
+            id: self.operation_tracker.next_id(),
+            kind: OperationKind::ManualAction("worktree_remove"),
+            label: "Removing worktree…".to_string(),
+        }));
+        start.chain(Task::perform(
             worktree::task::remove(
                 repo_path,
                 prompt.target.path,
@@ -167,7 +232,7 @@ impl App {
                 prompt.force,
             ),
             |result| Message::from(worktree::Message::RemoveDone(result)),
-        )
+        ))
     }
 
     fn start_worktree_lock(&mut self, target: WorktreeSummary) -> Task<Message> {
@@ -180,10 +245,15 @@ impl App {
 
         self.operation.loading = true;
         self.operation.error = None;
-        Task::perform(
+        let start = Task::done(Message::Operation(OperationEvent::Started {
+            id: self.operation_tracker.next_id(),
+            kind: OperationKind::ManualAction("worktree_lock"),
+            label: "Locking worktree…".to_string(),
+        }));
+        start.chain(Task::perform(
             worktree::task::lock(repo_path, target.path, "Locked by naite".into()),
             |result| Message::from(worktree::Message::LockDone(result)),
-        )
+        ))
     }
 
     fn start_worktree_unlock(&mut self, target: WorktreeSummary) -> Task<Message> {
@@ -196,26 +266,51 @@ impl App {
 
         self.operation.loading = true;
         self.operation.error = None;
-        Task::perform(worktree::task::unlock(repo_path, target.path), |result| {
-            Message::from(worktree::Message::UnlockDone(result))
-        })
+        let start = Task::done(Message::Operation(OperationEvent::Started {
+            id: self.operation_tracker.next_id(),
+            kind: OperationKind::ManualAction("worktree_unlock"),
+            label: "Unlocking worktree…".to_string(),
+        }));
+        start.chain(Task::perform(
+            worktree::task::unlock(repo_path, target.path),
+            |result| Message::from(worktree::Message::UnlockDone(result)),
+        ))
     }
 
     fn finish_worktree_mutation(
         &mut self,
+        kind: &OperationKind,
         result: Result<(), String>,
         success_message: String,
     ) -> Task<Message> {
+        let completion = match self.operation_tracker.current_id_for(kind) {
+            Some(id) => {
+                let event = match &result {
+                    Ok(()) => OperationEvent::Completed {
+                        id,
+                        result: OpResult::Success,
+                        severity: OpSeverity::Recoverable,
+                    },
+                    Err(message) => OperationEvent::Completed {
+                        id,
+                        result: OpResult::Failed(message.clone()),
+                        severity: OpSeverity::Recoverable,
+                    },
+                };
+                Task::done(Message::Operation(event))
+            }
+            None => Task::none(),
+        };
         self.operation.loading = false;
         self.selection.worktree_remove_confirmation = None;
         match result {
             Ok(()) => {
                 self.set_transient_status(success_message);
-                self.reload_current_repo()
+                completion.chain(self.reload_current_repo())
             }
             Err(msg) => {
                 self.operation.error = Some(msg);
-                Task::none()
+                completion
             }
         }
     }
@@ -225,9 +320,14 @@ impl App {
             return Task::none();
         };
         self.operation.loading = true;
-        Task::perform(repo_open::task::load(path), |result| {
+        let reload_start = Task::done(Message::Operation(OperationEvent::Started {
+            id: self.operation_tracker.next_id(),
+            kind: OperationKind::ManualAction("repo_open_reload"),
+            label: "Reloading repository…".to_string(),
+        }));
+        reload_start.chain(Task::perform(repo_open::task::load(path), |result| {
             Message::from(repo_open::Message::Loaded(Box::new(result)))
-        })
+        }))
     }
 }
 

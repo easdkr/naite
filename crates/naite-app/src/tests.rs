@@ -27,10 +27,11 @@ use crate::features::{
 use crate::message::{KeyAction, Message, TabsMessage};
 use crate::state::{
     BranchCreateBase, BranchCreateState, BranchManageRenameState, CommandPaletteState,
-    CommitFormState, DiffViewMode, OperationState, ReleasePrepPhase, ReleasePrepState,
-    RepositoryState, SelectionState, SidebarClickState, SidebarSection, StashBranchState,
-    TagNameMode, TerminalCell, TerminalGridPoint, TerminalImeDeleteAction, TerminalImePreedit,
-    TerminalScreen, TerminalSelection, TerminalStatus, TransientStatus, UndoCheckpoint,
+    CommitFormState, DiffViewMode, OpResult, OpSeverity, OperationKind, OperationState,
+    OperationTracker, ReleasePrepPhase, ReleasePrepState, RepositoryState, SelectionState,
+    SidebarClickState, SidebarSection, StashBranchState, TagNameMode, TerminalCell,
+    TerminalGridPoint, TerminalImeDeleteAction, TerminalImePreedit, TerminalScreen,
+    TerminalSelection, TerminalStatus, TransientStatus, UndoCheckpoint,
 };
 use crate::subscription::{app_event, keyboard_shortcut, terminal_app_event};
 use crate::{
@@ -4740,7 +4741,7 @@ fn error_recovery_offers_force_push_on_non_fast_forward() {
             ..Default::default()
         },
         operation: OperationState {
-            error: Some(
+            fatal_error: Some(
                 "git push: ! [rejected] staging -> staging (non-fast-forward)\n\
                  error: failed to push some refs"
                     .into(),
@@ -8866,4 +8867,646 @@ fn commit_action_keys_are_suppressed_when_text_input_captured() {
             "key '{ch}' should be suppressed when Captured"
         );
     }
+}
+
+// =====================================================================
+// release_prep_prepare_baseline
+//
+// Regression baselines that lock down the CURRENT (pre-refactor) behavior
+// of `release_prep::task::prepare()`. Task 21 (Wave 5) will split the
+// single spawn_blocking closure into 7 per-step async fns; these tests
+// must keep passing against that split implementation so the refactor
+// stays behavior-preserving.
+//
+// All tests construct a real local git repository (mirroring the helper
+// pattern from `crates/naite-core/src/test_helpers.rs`) and call
+// `release_prep::task::prepare` directly. No network or external
+// binaries are required beyond the `git` command on PATH, which the rest
+// of the workspace tests already assume.
+// =====================================================================
+mod release_prep_prepare_baseline {
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use crate::features::release_prep;
+
+    /// Holds the temporary directories backing a single baseline test so
+    /// they can be cleaned up deterministically when the test ends.
+    struct ReleasePrepTestRepo {
+        remote: PathBuf,
+        parent: PathBuf,
+    }
+
+    impl ReleasePrepTestRepo {
+        fn local(&self) -> PathBuf {
+            self.parent.join("local")
+        }
+    }
+
+    impl Drop for ReleasePrepTestRepo {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.remote);
+            let _ = std::fs::remove_dir_all(&self.parent);
+        }
+    }
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "naite-app-release-prep-baseline-{tag}-{nanos}-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    fn run_git(cwd: &Path, args: &[&str]) -> String {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .output()
+            .unwrap_or_else(|err| panic!("failed to spawn git {args:?}: {err}"));
+        assert!(
+            output.status.success(),
+            "git {args:?} failed in {}: {}",
+            cwd.display(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).to_string()
+    }
+
+    /// Creates a self-contained repository layout for release_prep tests:
+    ///
+    /// * a bare `origin` remote,
+    /// * a source repo with `main` (initial commit) and `staging` (one
+    ///   extra commit "staging") both pushed,
+    /// * a local clone on the `staging` branch (matching `origin/staging`),
+    ///   with `user.name` / `user.email` configured so the prepare pipeline
+    ///   can resolve `configured_user_email`.
+    ///
+    /// The returned `ReleasePrepTestRepo` cleans up both directories on
+    /// drop.
+    fn setup_synced_repo(tag: &str) -> ReleasePrepTestRepo {
+        let remote = temp_dir(&format!("{tag}-remote"));
+        run_git(&remote, &["init", "--bare"]);
+        // Bare `init` defaults to the host's initial branch name; pin HEAD
+        // so `clone --branch main` works on hosts that default to `master`.
+        run_git(&remote, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+
+        let source = temp_dir(&format!("{tag}-source"));
+        run_git(&source, &["init", "-b", "main"]);
+        run_git(&source, &["config", "user.name", "naite test"]);
+        run_git(&source, &["config", "user.email", "naite@example.com"]);
+        std::fs::write(source.join("file.txt"), "initial\n").unwrap();
+        run_git(&source, &["add", "file.txt"]);
+        run_git(&source, &["commit", "-m", "initial"]);
+        run_git(
+            &source,
+            &["remote", "add", "origin", remote.to_str().unwrap()],
+        );
+        run_git(&source, &["push", "-u", "origin", "main"]);
+        run_git(&source, &["checkout", "-b", "staging"]);
+        std::fs::write(source.join("staging.txt"), "staging\n").unwrap();
+        run_git(&source, &["add", "staging.txt"]);
+        run_git(&source, &["commit", "-m", "staging"]);
+        run_git(&source, &["push", "-u", "origin", "staging"]);
+
+        let parent = temp_dir(&format!("{tag}-parent"));
+        let local = parent.join("local");
+        let clone = std::process::Command::new("git")
+            .args([
+                "clone",
+                "--branch",
+                "staging",
+                remote.to_str().unwrap(),
+                local.to_str().unwrap(),
+            ])
+            .output()
+            .expect("git clone");
+        assert!(
+            clone.status.success(),
+            "git clone failed: {}",
+            String::from_utf8_lossy(&clone.stderr)
+        );
+        run_git(&local, &["config", "user.name", "naite test"]);
+        run_git(&local, &["config", "user.email", "naite@example.com"]);
+        // Touch both branches so remote tracking refs are populated locally.
+        run_git(&local, &["checkout", "main"]);
+        run_git(&local, &["checkout", "staging"]);
+
+        ReleasePrepTestRepo { remote, parent }
+    }
+
+    fn baseline_profile() -> naite_core::ReleaseProfile {
+        naite_core::ReleaseProfile {
+            remote: "origin".into(),
+            source_branch: "staging".into(),
+            target_branch: "main".into(),
+            validation_script: None,
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn release_prep_prepare_baseline_success() {
+        let repo = setup_synced_repo("success");
+        let local = repo.local();
+
+        let outcome = release_prep::task::prepare(local.clone(), baseline_profile(), true)
+            .await
+            .expect("prepare() should succeed against a synced, clean repo");
+
+        assert_eq!(outcome.sync_check.profile.remote, "origin");
+        assert_eq!(outcome.sync_check.profile.source_branch, "staging");
+        assert_eq!(outcome.sync_check.profile.target_branch, "main");
+        assert!(outcome.sync_check.is_ready());
+        assert!(outcome.sync_check.source.is_ready());
+        assert!(outcome.sync_check.target.is_ready());
+        assert_eq!(outcome.sync_check.source.local_ref, "refs/heads/staging");
+        assert_eq!(
+            outcome.sync_check.source.remote_ref,
+            "refs/remotes/origin/staging"
+        );
+        assert_eq!(outcome.sync_check.target.local_ref, "refs/heads/main");
+        assert_eq!(
+            outcome.sync_check.target.remote_ref,
+            "refs/remotes/origin/main"
+        );
+
+        let backup = outcome
+            .backup_branch
+            .as_deref()
+            .expect("backup_before_rebase=true should produce a backup branch");
+        assert!(
+            backup.starts_with("naite/release-prep/staging-"),
+            "unexpected backup branch name: {backup}"
+        );
+
+        assert_eq!(outcome.current_branch.short_name, "staging");
+        assert!(outcome.current_branch.is_head);
+        assert_eq!(outcome.current_branch.full_name, "refs/heads/staging");
+        assert_eq!(outcome.target.short_name, "main");
+        assert!(!outcome.target.is_head);
+        assert_eq!(outcome.target.full_name, "refs/heads/main");
+
+        assert_eq!(
+            outcome.current_author_email.as_deref(),
+            Some("naite@example.com")
+        );
+
+        assert_eq!(outcome.plan.len(), 1);
+        let row = &outcome.plan[0];
+        assert_eq!(row.action, naite_core::RebaseAction::Pick);
+        assert_eq!(row.commit.summary, "staging");
+        assert_eq!(row.commit.author_email, "naite@example.com");
+        assert!(row.author_avatar_url.is_none());
+
+        let snapshot = &outcome.repo_snapshot;
+        assert_eq!(snapshot.6.as_deref(), Some("staging"));
+        assert!(!snapshot.7.is_dirty(), "snapshot worktree should be clean");
+        assert!(!snapshot.9.is_busy(), "snapshot should report no busy op");
+        let subjects: Vec<String> = snapshot
+            .1
+            .iter()
+            .map(|commit| commit.summary.clone())
+            .collect();
+        assert!(subjects.contains(&"initial".to_string()));
+        assert!(subjects.contains(&"staging".to_string()));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn release_prep_prepare_baseline_dirty_worktree() {
+        let repo = setup_synced_repo("dirty");
+        let local = repo.local();
+        // Modify a tracked file without staging or committing to make the
+        // worktree dirty.
+        std::fs::write(local.join("file.txt"), "modified but not staged\n").unwrap();
+
+        let err = release_prep::task::prepare(local.clone(), baseline_profile(), false)
+            .await
+            .expect_err("prepare() must refuse a dirty worktree before doing IO");
+        assert!(
+            err.contains("worktree has local changes"),
+            "dirty-worktree error should mention local changes; got: {err}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn release_prep_prepare_baseline_busy_operation() {
+        let repo = setup_synced_repo("busy");
+        let local = repo.local();
+        // Simulate an in-progress merge by dropping a MERGE_HEAD marker
+        // into the .git directory; operation_state().is_busy() then
+        // reports true.
+        let git_dir = run_git(&local, &["rev-parse", "--absolute-git-dir"])
+            .trim()
+            .to_string();
+        std::fs::write(format!("{git_dir}/MERGE_HEAD"), "deadbeef\n").unwrap();
+
+        let err = release_prep::task::prepare(local.clone(), baseline_profile(), false)
+            .await
+            .expect_err("prepare() must refuse when another git op is in progress");
+        assert!(
+            err.contains("another Git operation is already in progress"),
+            "busy-operation error should mention another git operation; got: {err}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn release_prep_prepare_baseline_sync_failure() {
+        // Build a repo where `main` matches `origin/main` but `staging`
+        // exists only locally (no remote tracking ref). The prepare
+        // pipeline's force-sync step therefore fails when it tries to
+        // verify the missing remote ref via `git show-ref --verify`.
+        let remote = temp_dir("sync-failure-remote");
+        run_git(&remote, &["init", "--bare"]);
+        run_git(&remote, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+
+        let source = temp_dir("sync-failure-source");
+        run_git(&source, &["init", "-b", "main"]);
+        run_git(&source, &["config", "user.name", "naite test"]);
+        run_git(&source, &["config", "user.email", "naite@example.com"]);
+        std::fs::write(source.join("file.txt"), "initial\n").unwrap();
+        run_git(&source, &["add", "file.txt"]);
+        run_git(&source, &["commit", "-m", "initial"]);
+        run_git(
+            &source,
+            &["remote", "add", "origin", remote.to_str().unwrap()],
+        );
+        // Only push main; staging stays local-only on the remote side.
+        run_git(&source, &["push", "-u", "origin", "main"]);
+
+        let parent = temp_dir("sync-failure-parent");
+        let local = parent.join("local");
+        let clone = std::process::Command::new("git")
+            .args(["clone", remote.to_str().unwrap(), local.to_str().unwrap()])
+            .output()
+            .expect("git clone");
+        assert!(
+            clone.status.success(),
+            "git clone failed: {}",
+            String::from_utf8_lossy(&clone.stderr)
+        );
+        run_git(&local, &["config", "user.name", "naite test"]);
+        run_git(&local, &["config", "user.email", "naite@example.com"]);
+        // Create the local-only staging branch with a divergent commit so
+        // sync_release_branches_with_remote must try to force-sync it.
+        run_git(&local, &["checkout", "-b", "staging"]);
+        std::fs::write(local.join("staging.txt"), "staging only\n").unwrap();
+        run_git(&local, &["add", "staging.txt"]);
+        run_git(&local, &["commit", "-m", "staging"]);
+        // Switch back to main so HEAD is not the diverging staging ref
+        // (prepare requires HEAD to be a non-source branch at step B5).
+        run_git(&local, &["checkout", "main"]);
+
+        let result = release_prep::task::prepare(local.clone(), baseline_profile(), false).await;
+
+        let _ = std::fs::remove_dir_all(&remote);
+        let _ = std::fs::remove_dir_all(&parent);
+
+        let err =
+            result.expect_err("prepare() must fail when force-sync cannot reach the remote ref");
+        // The exact stderr wording varies by git version, so assert on a
+        // stable substring of the failing git command instead of the full
+        // message.
+        assert!(
+            err.contains("show-ref")
+                || err.contains("refs/remotes/origin/staging")
+                || err.contains("Release branches"),
+            "sync failure error should reference the missing remote ref or the formatted sync message; got: {err}"
+        );
+    }
+}
+
+// release_prep_step_chain — pins the invariants of the 6-step pipeline
+// added by Task 21: enum order, success transitions, and failure stops.
+mod release_prep_step_chain {
+    use std::path::PathBuf;
+
+    use naite_core::ReleaseProfile;
+
+    use crate::features::release_prep::{self, Message as ReleasePrepMessage};
+    use crate::state::{
+        PrepareStepOutcome, ReleasePrepPhase, ReleasePrepState, ReleasePrepStep, RepositoryState,
+    };
+    use crate::{App, Message};
+
+    fn chain_test_app(current_step: ReleasePrepStep) -> App {
+        App {
+            repo: RepositoryState {
+                path: Some(PathBuf::from("/tmp/naite-release-prep-chain")),
+                ..Default::default()
+            },
+            release_prep: ReleasePrepState {
+                phase: ReleasePrepPhase::Preparing,
+                active_profile: Some(ReleaseProfile {
+                    remote: "origin".into(),
+                    source_branch: "staging".into(),
+                    target_branch: "main".into(),
+                    validation_script: None,
+                }),
+                preparing_step: Some(current_step),
+                backup_before_rebase: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn step_chain_indices_match_display_order_fetch_to_building_plan() {
+        assert_eq!(ReleasePrepStep::FetchingRemote.index(), 1);
+        assert_eq!(ReleasePrepStep::SyncingBranches.index(), 2);
+        assert_eq!(ReleasePrepStep::CheckingSync.index(), 3);
+        assert_eq!(ReleasePrepStep::CheckingOutSource.index(), 4);
+        assert_eq!(ReleasePrepStep::CreatingBackup.index(), 5);
+        assert_eq!(ReleasePrepStep::BuildingPlan.index(), 6);
+        assert_eq!(ReleasePrepStep::TOTAL, 6);
+    }
+
+    #[test]
+    fn step_done_success_pushes_completed_and_clears_preparing() {
+        let mut app = chain_test_app(ReleasePrepStep::SyncingBranches);
+
+        let _ = app.update(Message::from(ReleasePrepMessage::PrepareStepDone {
+            step: ReleasePrepStep::SyncingBranches,
+            result: Box::new(Ok(PrepareStepOutcome::default())),
+        }));
+
+        assert!(
+            app.release_prep.preparing_step.is_none(),
+            "preparing_step should be cleared after a successful step"
+        );
+        assert!(app
+            .release_prep
+            .completed_preparing_steps
+            .contains(&ReleasePrepStep::SyncingBranches));
+        assert_eq!(
+            app.release_prep.phase,
+            ReleasePrepPhase::Preparing,
+            "successful step keeps the chain in Preparing phase"
+        );
+        assert!(
+            app.release_prep.error.is_none(),
+            "successful step should not set error"
+        );
+    }
+
+    #[test]
+    fn step_done_at_checking_sync_failure_stops_chain_and_sets_error() {
+        let mut app = chain_test_app(ReleasePrepStep::CheckingSync);
+
+        let _ = app.update(Message::from(ReleasePrepMessage::PrepareStepDone {
+            step: ReleasePrepStep::CheckingSync,
+            result: Box::new(Err("Release branches still differ".into())),
+        }));
+
+        assert_eq!(
+            app.release_prep.phase,
+            ReleasePrepPhase::Configuring,
+            "chain failure should flip the phase back to Configuring"
+        );
+        assert_eq!(
+            app.release_prep.error.as_deref(),
+            Some("Release branches still differ"),
+            "the failing step's error should be surfaced verbatim"
+        );
+        assert!(
+            app.release_prep.preparing_step.is_none(),
+            "preparing_step should be cleared after a failed step"
+        );
+        assert!(
+            app.release_prep
+                .completed_preparing_steps
+                .contains(&ReleasePrepStep::CheckingSync),
+            "the failing step should still be appended to completed_preparing_steps"
+        );
+        assert!(
+            !app.release_prep
+                .completed_preparing_steps
+                .contains(&ReleasePrepStep::CheckingOutSource),
+            "no later step should have run after the failure"
+        );
+    }
+
+    #[test]
+    fn step_started_sets_preparing_and_marks_running_step() {
+        let mut app = chain_test_app(ReleasePrepStep::FetchingRemote);
+        app.release_prep.preparing_step = None;
+        app.release_prep.completed_preparing_steps.clear();
+
+        let _ = app.update(Message::from(ReleasePrepMessage::PrepareStepStarted(
+            ReleasePrepStep::SyncingBranches,
+        )));
+
+        assert_eq!(
+            app.release_prep.preparing_step,
+            Some(ReleasePrepStep::SyncingBranches),
+            "PrepareStepStarted should mark the new step as preparing"
+        );
+    }
+
+    #[test]
+    fn release_prep_next_step_walks_chain_in_order() {
+        let order = [
+            ReleasePrepStep::FetchingRemote,
+            ReleasePrepStep::SyncingBranches,
+            ReleasePrepStep::CheckingSync,
+            ReleasePrepStep::CheckingOutSource,
+            ReleasePrepStep::CreatingBackup,
+            ReleasePrepStep::BuildingPlan,
+        ];
+        for window in order.windows(2) {
+            let next = release_prep::update::next_release_prep_step(window[0]);
+            assert_eq!(
+                next,
+                Some(window[1]),
+                "expected {:?} -> {:?}, got {:?}",
+                window[0],
+                window[1],
+                next
+            );
+        }
+        assert_eq!(
+            release_prep::update::next_release_prep_step(ReleasePrepStep::BuildingPlan),
+            None,
+            "BuildingPlan is the terminal step"
+        );
+    }
+}
+// --- Task 5: OperationTracker state model ---
+
+#[test]
+fn operation_tracker_start_moves_op_into_in_flight_with_no_history() {
+    let mut tracker = OperationTracker::default();
+    let id = tracker.start(OperationKind::AutoFetch, "fetch origin");
+
+    assert_eq!(id, 1, "first start should hand out id 1");
+    assert_eq!(tracker.active().len(), 1);
+    assert_eq!(tracker.active()[0].id, id);
+    assert_eq!(tracker.active()[0].label, "fetch origin");
+    assert!(matches!(tracker.active()[0].kind, OperationKind::AutoFetch));
+    assert!(tracker.active()[0].step.is_none());
+    assert_eq!(
+        tracker.recent(usize::MAX).len(),
+        0,
+        "history should be empty before any completion"
+    );
+}
+
+#[test]
+fn operation_tracker_complete_moves_op_into_history_and_empties_in_flight() {
+    let mut tracker = OperationTracker::default();
+    let id = tracker.start(OperationKind::AutoFetch, "fetch origin");
+
+    tracker
+        .complete(id, OpResult::Success, OpSeverity::Recoverable)
+        .expect("complete must succeed for known id");
+
+    assert_eq!(tracker.active().len(), 0);
+    assert_eq!(tracker.recent(usize::MAX).len(), 1);
+    let history = tracker.recent(usize::MAX);
+    assert_eq!(history[0].label, "fetch origin");
+    assert!(matches!(history[0].result, OpResult::Success));
+    assert_eq!(history[0].severity, OpSeverity::Recoverable);
+}
+
+#[test]
+fn operation_tracker_history_is_capped_at_op_history_cap_with_fifo_eviction() {
+    let mut tracker = OperationTracker::default();
+    let total = crate::theme::OP_HISTORY_CAP + 1;
+
+    for index in 0..total {
+        let id = tracker.start(OperationKind::AutoFetch, format!("op-{index}"));
+        tracker
+            .complete(id, OpResult::Success, OpSeverity::Recoverable)
+            .unwrap();
+    }
+
+    let history = tracker.recent(usize::MAX);
+    assert_eq!(history.len(), crate::theme::OP_HISTORY_CAP);
+    assert!(
+        !history.iter().any(|op| op.label == "op-0"),
+        "oldest entry must be evicted when cap is exceeded"
+    );
+    assert!(
+        history.iter().any(|op| op.label == "op-50"),
+        "newest entry must be present after eviction"
+    );
+}
+
+#[test]
+fn operation_tracker_restart_after_complete_does_not_duplicate_in_flight() {
+    let mut tracker = OperationTracker::default();
+
+    let id1 = tracker.start(OperationKind::AutoFetch, "first");
+    tracker
+        .complete(id1, OpResult::Success, OpSeverity::Recoverable)
+        .unwrap();
+
+    let id2 = tracker.start(OperationKind::AutoFetch, "second");
+
+    assert_ne!(id1, id2, "ids must be monotonic — never reused");
+    assert_eq!(tracker.active().len(), 1, "no duplicate in in_flight");
+    assert_eq!(tracker.recent(usize::MAX).len(), 1);
+    assert_eq!(tracker.active()[0].id, id2);
+    assert_eq!(tracker.active()[0].label, "second");
+}
+
+#[test]
+fn operation_tracker_fail_records_completion_with_fatal_severity() {
+    let mut tracker = OperationTracker::default();
+    let id = tracker.start(OperationKind::ManualAction("rebase"), "rebase onto main");
+
+    tracker
+        .fail(id, "merge conflict", OpSeverity::Fatal)
+        .expect("fail must succeed for known id");
+
+    assert_eq!(tracker.active().len(), 0);
+    assert_eq!(tracker.recent(usize::MAX).len(), 1);
+    let recent = tracker.recent(usize::MAX);
+    let completed = recent[0];
+    assert_eq!(completed.severity, OpSeverity::Fatal);
+    assert_eq!(completed.label, "rebase onto main");
+    match &completed.result {
+        OpResult::Failed(message) => assert_eq!(message, "merge conflict"),
+        OpResult::Success => panic!("fail must record OpResult::Failed"),
+    }
+}
+
+#[test]
+fn operation_tracker_dismiss_removes_completed_op_from_history() {
+    let mut tracker = OperationTracker::default();
+    let id = tracker.start(OperationKind::AutoFetch, "fetch origin");
+    tracker
+        .complete(id, OpResult::Success, OpSeverity::Recoverable)
+        .unwrap();
+    assert_eq!(tracker.recent(usize::MAX).len(), 1);
+
+    tracker
+        .dismiss(id)
+        .expect("dismiss must succeed for id present in history");
+
+    assert_eq!(tracker.recent(usize::MAX).len(), 0);
+}
+
+#[test]
+fn operation_tracker_active_long_running_returns_some_after_threshold() {
+    let mut tracker = OperationTracker::default();
+    let id = tracker.start(OperationKind::AutoFetch, "fetch origin");
+
+    assert!(
+        tracker.active_long_running(0).is_some(),
+        "threshold=0 must always match an in-flight op"
+    );
+    assert!(
+        tracker.active_long_running(u64::MAX).is_none(),
+        "threshold=u64::MAX seconds must never match a just-started op"
+    );
+    assert_eq!(
+        tracker.active_long_running(0).unwrap().id,
+        id,
+        "the matched op must be the one we started"
+    );
+}
+
+#[test]
+fn operation_tracker_complete_unknown_id_returns_error() {
+    let mut tracker = OperationTracker::default();
+
+    let result = tracker.complete(999, OpResult::Success, OpSeverity::Recoverable);
+
+    assert!(result.is_err());
+    assert_eq!(tracker.active().len(), 0);
+    assert_eq!(tracker.recent(usize::MAX).len(), 0);
+}
+
+#[test]
+fn operation_tracker_dismiss_unknown_id_returns_error() {
+    let mut tracker = OperationTracker::default();
+
+    let result = tracker.dismiss(999);
+
+    assert!(result.is_err());
+}
+
+#[test]
+fn operation_tracker_recent_returns_correct_entries_after_ring_wraparound() {
+    let mut tracker = OperationTracker::default();
+    let total = crate::theme::OP_HISTORY_CAP + 10;
+
+    for index in 0..total {
+        let id = tracker.start(OperationKind::AutoFetch, format!("op-{index}"));
+        tracker
+            .complete(id, OpResult::Success, OpSeverity::Recoverable)
+            .unwrap();
+    }
+
+    let recent3 = tracker.recent(3);
+    assert_eq!(recent3.len(), 3);
+    assert_eq!(recent3[0].label, format!("op-{}", total - 3));
+    assert_eq!(recent3[1].label, format!("op-{}", total - 2));
+    assert_eq!(recent3[2].label, format!("op-{}", total - 1));
 }

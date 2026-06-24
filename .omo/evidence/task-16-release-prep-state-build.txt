@@ -1,0 +1,30 @@
+Task 16: ReleasePrepStep enum + preparing step state fields
+Date: 2026-06-23T09:27:49Z
+===================================================
+
+--- cargo build -p naite-app ---
+
+warning: `naite-app` (bin "naite") generated 22 warnings (run `cargo fix --bin "naite" -p naite-app` to apply 3 suggestions)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.31s
+
+--- cargo test --workspace --locked (summary) ---
+test result: ok. 378 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.58s
+test result: ok. 265 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.32s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+--- cargo test --workspace --locked -- release_prep ---
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 357 filtered out; finished in 1.11s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 265 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+--- Files touched ---
+ .../naite-app/src/features/release_prep/message.rs |  7 ++++++
+ .../naite-app/src/features/release_prep/update.rs  |  2 ++
+ crates/naite-app/src/state.rs                      | 28 ++++++++++++++++++++++
+ 3 files changed, 37 insertions(+)
+
+--- New public types ---
+ReleasePrepStep variants: FetchingRemote, SyncingBranches, CheckingSync, CheckingOutSource, CreatingBackup, BuildingPlan
+PrepareStepOutcome fields: sync_check: Option<ReleaseSyncCheck>, backup_branch_name: Option<String>, plan_entries: Option<Vec<RebasePlanRow>>
+ReleasePrepState new fields: preparing_step: Option<ReleasePrepStep>, completed_preparing_steps: Vec<ReleasePrepStep>
+release_prep::Message new variants: PrepareStepStarted(ReleasePrepStep), PrepareStepDone { step, result: Box<Result<PrepareStepOutcome, String>> }

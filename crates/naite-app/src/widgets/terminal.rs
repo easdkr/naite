@@ -24,13 +24,37 @@ use super::common::uses_ui_font_fallback;
 pub const TERMINAL_PANEL_HEIGHT: f32 = 320.0;
 /// Height reserved for the bottom terminal pane when minimized.
 pub const TERMINAL_PANEL_HEIGHT_MINIMIZED: f32 = 96.0;
-/// Approximate vertical room consumed by the panel chrome (header + tab strip
-/// + paddings). Used by the dimension calculation to derive shell row count.
-pub const TERMINAL_PANEL_CHROME: f32 = 110.0;
+/// Vertical room consumed by the status chip row when the chip is visible.
+pub const STATUS_CHIP_HEIGHT: f32 = 22.0;
+/// Vertical room consumed by the terminal tab strip row.
+pub const TAB_ROW_HEIGHT: f32 = 28.0;
 /// Approximate monospace cell width used for terminal hit-testing.
 pub const TERMINAL_CHAR_WIDTH: f32 = 7.6;
-/// Fixed terminal row height used by rendering and mouse hit-testing.
-pub const TERMINAL_LINE_HEIGHT: f32 = 15.0;
+/// Fixed terminal row height. Sized for CJK glyphs at FS_SM; Latin stays
+/// comfortable. Replaces the previous 15.0 which clipped Hangul descenders.
+pub const TERMINAL_LINE_HEIGHT: f32 = 17.0;
+
+/// Whether the active session renders a status chip. Mirrors `status_label`
+/// so the chrome heuristic stays in sync with the actual render.
+pub(crate) fn status_chip_visible(session: &TerminalSession) -> bool {
+    !matches!(session.status, TerminalStatus::Running)
+}
+
+/// Vertical room consumed by panel chrome (header + divider + tab strip +
+/// padding + optional status chip). Varies with chip visibility so the body
+/// height matches the chrome actually rendered.
+pub fn panel_chrome(state: &TerminalState) -> f32 {
+    const HEADER: f32 = 32.0;
+    const DIVIDER: f32 = 1.0;
+    const PADDING: f32 = 24.0;
+    let mut chrome = HEADER + DIVIDER + TAB_ROW_HEIGHT + PADDING;
+    if let Some(session) = state.active_session() {
+        if status_chip_visible(session) {
+            chrome += STATUS_CHIP_HEIGHT;
+        }
+    }
+    chrome
+}
 
 const PATH_LABEL_MAX_CHARS: usize = 64;
 const TAB_LABEL_MAX_CHARS: usize = 18;

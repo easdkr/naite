@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use naite_core::{
     HistoryCommit, RebaseAction, RefKind, RefSummary, ReleaseProfile, ReleaseSyncCheck, Repository,
@@ -31,12 +31,48 @@ pub(crate) async fn load_suggestion(
     .map_err(|e| format!("worker join error: {e}"))?
 }
 
+/// `prepare()` is the monolithic pre-Wave-5 entry point. After Wave 5's
+/// per-step split, the user-facing pipeline no longer calls it directly,
+/// but it is retained and exercised by the `release_prep_prepare_baseline_*`
+/// regression tests in `tests.rs` so the original semantics remain locked in.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) async fn prepare(
     path: PathBuf,
     profile: ReleaseProfile,
     backup_before_rebase: bool,
 ) -> Result<PrepareOutcome, String> {
-    tokio::task::spawn_blocking(move || -> Result<_, String> {
+    preflight(&path).await?;
+    prepare_step_fetch(path.clone(), profile.clone()).await?;
+    prepare_step_sync_branches(path.clone(), profile.clone()).await?;
+    let sync_check = prepare_step_check_sync(path.clone(), profile.clone()).await?;
+    prepare_step_checkout(path.clone(), profile.clone()).await?;
+    let backup_branch = if backup_before_rebase {
+        prepare_step_backup(path.clone(), profile.clone()).await?
+    } else {
+        None
+    };
+    let (plan, current_author_email, repo_snapshot) =
+        prepare_step_build_plan(path, profile.clone()).await?;
+
+    Ok(PrepareOutcome {
+        sync_check: sync_check.clone(),
+        backup_branch,
+        current_branch: branch_ref(&profile.source_branch, true, &sync_check.source),
+        target: branch_ref(&profile.target_branch, false, &sync_check.target),
+        current_author_email,
+        plan,
+        repo_snapshot,
+    })
+}
+
+/// Preflight guard (busy operation + dirty worktree). Not a user-visible
+/// `ReleasePrepStep`; surfaced via `complete_release_prep_op` rather than
+/// `PrepareStepDone { .. Err .. }`. Only invoked from `prepare()` above;
+/// keep the attribute in sync with `prepare`'s `cfg_attr(not(test), ..)`.
+#[cfg_attr(not(test), allow(dead_code))]
+async fn preflight(path: &Path) -> Result<(), String> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || -> Result<(), String> {
         let repo = Repository::open(&path).map_err(|e| e.to_string())?;
         if repo.operation_state().is_busy() {
             return Err("another Git operation is already in progress".into());
@@ -44,29 +80,90 @@ pub(crate) async fn prepare(
         if repo.status_detail().map_err(|e| e.to_string())?.is_dirty() {
             return Err("worktree has local changes".into());
         }
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("worker join error: {e}"))?
+}
 
+pub(crate) async fn prepare_step_fetch(
+    path: PathBuf,
+    profile: ReleaseProfile,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || -> Result<(), String> {
+        let repo = Repository::open(&path).map_err(|e| e.to_string())?;
         repo.fetch_release_remote(&profile.remote)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("worker join error: {e}"))?
+}
+
+pub(crate) async fn prepare_step_sync_branches(
+    path: PathBuf,
+    profile: ReleaseProfile,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || -> Result<(), String> {
+        let repo = Repository::open(&path).map_err(|e| e.to_string())?;
         repo.sync_release_branches_with_remote(&profile)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("worker join error: {e}"))?
+}
+
+pub(crate) async fn prepare_step_check_sync(
+    path: PathBuf,
+    profile: ReleaseProfile,
+) -> Result<ReleaseSyncCheck, String> {
+    tokio::task::spawn_blocking(move || -> Result<ReleaseSyncCheck, String> {
+        let repo = Repository::open(&path).map_err(|e| e.to_string())?;
         let sync_check = repo
             .check_release_sync(&profile)
             .map_err(|e| e.to_string())?;
         if !sync_check.is_ready() {
             return Err(format_sync_failure(&sync_check));
         }
+        Ok(sync_check)
+    })
+    .await
+    .map_err(|e| format!("worker join error: {e}"))?
+}
 
+pub(crate) async fn prepare_step_checkout(
+    path: PathBuf,
+    profile: ReleaseProfile,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || -> Result<(), String> {
+        let repo = Repository::open(&path).map_err(|e| e.to_string())?;
         repo.checkout_release_source(&profile)
-            .map_err(|e| e.to_string())?;
-        let backup_branch = if backup_before_rebase {
-            Some(
-                repo.create_release_backup_branch(&profile)
-                    .map_err(|e| e.to_string())?,
-            )
-        } else {
-            None
-        };
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("worker join error: {e}"))?
+}
 
+pub(crate) async fn prepare_step_backup(
+    path: PathBuf,
+    profile: ReleaseProfile,
+) -> Result<Option<String>, String> {
+    tokio::task::spawn_blocking(move || -> Result<Option<String>, String> {
+        let repo = Repository::open(&path).map_err(|e| e.to_string())?;
+        let name = repo
+            .create_release_backup_branch(&profile)
+            .map_err(|e| e.to_string())?;
+        Ok(Some(name))
+    })
+    .await
+    .map_err(|e| format!("worker join error: {e}"))?
+}
+
+pub(crate) async fn prepare_step_build_plan(
+    path: PathBuf,
+    profile: ReleaseProfile,
+) -> Result<(Vec<RebasePlanRow>, Option<String>, LoadedRepo), String> {
+    tokio::task::spawn_blocking(move || -> Result<_, String> {
+        let repo = Repository::open(&path).map_err(|e| e.to_string())?;
         let current_author_email = repo.configured_user_email().map_err(|e| e.to_string())?;
         let author_email = current_author_email.as_deref().and_then(normalized_email);
 
@@ -93,16 +190,7 @@ pub(crate) async fn prepare(
             })
             .collect();
         let repo_snapshot = repo_open::task::load_blocking(path)?;
-
-        Ok(PrepareOutcome {
-            current_branch: branch_ref(&profile.source_branch, true, &sync_check.source),
-            target: branch_ref(&profile.target_branch, false, &sync_check.target),
-            current_author_email,
-            sync_check,
-            backup_branch,
-            plan,
-            repo_snapshot,
-        })
+        Ok((plan, current_author_email, repo_snapshot))
     })
     .await
     .map_err(|e| format!("worker join error: {e}"))?
@@ -132,7 +220,11 @@ pub(crate) async fn run_action(
     .map_err(|e| format!("worker join error: {e}"))?
 }
 
-fn branch_ref(branch: &str, is_head: bool, sync: &naite_core::ReleaseBranchSync) -> RefSummary {
+pub(crate) fn branch_ref(
+    branch: &str,
+    is_head: bool,
+    sync: &naite_core::ReleaseBranchSync,
+) -> RefSummary {
     RefSummary {
         kind: RefKind::LocalBranch,
         short_name: branch.to_string(),

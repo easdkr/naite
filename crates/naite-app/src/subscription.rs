@@ -33,7 +33,19 @@ impl App {
         ]);
         let mut subscriptions = vec![events];
         subscriptions.push(terminal::runtime::subscription().map(Message::from));
-        if self.operation.transient_status.is_some() {
+        // The 250ms tick serves the transient status bar, the bottom-right toast
+        // layer's TTL bookkeeping, AND the overlay visibility bookkeeping
+        // (Task 20). Firing it while any of those is active keeps a single
+        // subscription instead of three independent 250ms clocks. The
+        // `overlay_visible` check keeps the tick firing for one extra cycle
+        // after all ops complete so the overlay actually disappears (the
+        // tick sets overlay_visible=None, then the subscription tears down).
+        let overlay_tick_active =
+            !self.operation_tracker.active().is_empty() || self.overlay_visible.is_some();
+        if self.operation.transient_status.is_some()
+            || !self.toasts.is_empty()
+            || overlay_tick_active
+        {
             subscriptions
                 .push(time::every(TRANSIENT_STATUS_TICK).map(|_| Message::TransientStatusTick));
         }

@@ -4,9 +4,9 @@ use std::path::PathBuf;
 use iced::Task;
 
 use crate::features::repo_open::{self, Message as RepoOpenMessage};
-use crate::message::TabsMessage;
+use crate::message::{OperationEvent, TabsMessage};
 use crate::persistence;
-use crate::state::ReleasePrepState;
+use crate::state::{OpResult, OpSeverity, OperationKind, ReleasePrepState};
 use crate::{App, Message};
 
 impl App {
@@ -22,21 +22,30 @@ impl App {
             }
             RepoOpenMessage::OpenRecent(path) => {
                 self.operation.error = None;
-                // Cache-hit path → instant tab swap; fall back to full load on miss.
                 if self.tabs.cache.contains_key(&path) && self.tabs.active.as_ref() != Some(&path) {
                     return self.update(Message::from(TabsMessage::Activate(path)));
                 }
                 self.operation.loading = true;
-                Task::perform(repo_open::task::load(path), |result| {
+                let start = Task::done(Message::Operation(OperationEvent::Started {
+                    id: self.operation_tracker.next_id(),
+                    kind: OperationKind::ManualAction("repo_open_open"),
+                    label: "Opening repository…".to_string(),
+                }));
+                start.chain(Task::perform(repo_open::task::load(path), |result| {
                     Message::from(RepoOpenMessage::Loaded(Box::new(result)))
-                })
+                }))
             }
             RepoOpenMessage::PathPicked(None) => Task::none(),
             RepoOpenMessage::PathPicked(Some(path)) => {
                 self.operation.loading = true;
-                Task::perform(repo_open::task::load(path), |result| {
+                let start = Task::done(Message::Operation(OperationEvent::Started {
+                    id: self.operation_tracker.next_id(),
+                    kind: OperationKind::ManualAction("repo_open_open"),
+                    label: format!("Opening {}…", path.display()),
+                }));
+                start.chain(Task::perform(repo_open::task::load(path), |result| {
                     Message::from(RepoOpenMessage::Loaded(Box::new(result)))
-                })
+                }))
             }
             RepoOpenMessage::Loaded(result) => match *result {
                 Ok((
@@ -61,8 +70,6 @@ impl App {
                     let repo_changed = self.repo.path.as_ref() != Some(&path);
                     self.preserve_known_commit_avatar_urls(&path, &mut commits);
 
-                    // Cache previous active state before replacing it. Only if
-                    // it actually represents a different repo with a path.
                     if repo_changed {
                         if let Some(prev_path) = self.repo.path.clone() {
                             if prev_path != path {
@@ -72,8 +79,6 @@ impl App {
                         }
                     }
 
-                    // Remove any pre-existing cache entry for the new path;
-                    // we're loading fresh into self.repo.
                     self.tabs.cache.remove(&path);
                     self.tabs.refreshing.remove(&path);
 
@@ -88,6 +93,11 @@ impl App {
                     self.repo.sync_status = sync_status;
                     self.repo.operation_state = operation_state;
                     self.repo.status_detail = status_detail;
+                    let completion = self.operation_tracker.emit_completed(
+                        &OperationKind::ManualAction("repo_open_open"),
+                        OpResult::Success,
+                        OpSeverity::Recoverable,
+                    );
                     self.operation.loading = false;
                     self.clear_repo_scoped_state();
                     if repo_changed {
@@ -105,7 +115,30 @@ impl App {
                                 self.selection.force_push_confirmation = Some(prompt);
                             }
                             Err(message) => {
-                                self.operation.error = Some(message);
+                                let id = self.operation_tracker.next_id();
+                                self.operation.error = Some(message.clone());
+                                let start =
+                                    Task::done(Message::Operation(OperationEvent::Started {
+                                        id,
+                                        kind: OperationKind::ManualAction("repo_open_force_push"),
+                                        label: "Preparing force push prompt…".to_string(),
+                                    }));
+                                let complete =
+                                    Task::done(Message::Operation(OperationEvent::Completed {
+                                        id,
+                                        result: OpResult::Failed(message),
+                                        severity: OpSeverity::Recoverable,
+                                    }));
+                                return completion
+                                    .map(|event| Task::done(Message::Operation(event)))
+                                    .unwrap_or_else(Task::none)
+                                    .chain(start.chain(complete))
+                                    .chain(
+                                        self.continue_after_load(
+                                            path,
+                                            should_auto_fetch_after_load,
+                                        ),
+                                    );
                             }
                         }
                     }
@@ -147,18 +180,21 @@ impl App {
                     } else {
                         Task::none()
                     };
-                    Task::batch([
-                        save_task,
-                        save_tabs_task,
-                        workspace_task,
-                        pull_request_task,
-                        commit_avatar_task,
-                        provider_commit_avatar_task,
-                        terminal_task,
-                        auto_fetch_task,
-                        select_task,
-                        release_auto_task,
-                    ])
+                    completion
+                        .map(|event| Task::done(Message::Operation(event)))
+                        .unwrap_or_else(Task::none)
+                        .chain(Task::batch([
+                            save_task,
+                            save_tabs_task,
+                            workspace_task,
+                            pull_request_task,
+                            commit_avatar_task,
+                            provider_commit_avatar_task,
+                            terminal_task,
+                            auto_fetch_task,
+                            select_task,
+                            release_auto_task,
+                        ]))
                 }
                 Err(msg) => {
                     self.operation.pending_transient_status_after_reload = None;
@@ -166,10 +202,17 @@ impl App {
                     self.operation.pending_force_push_after_reload = false;
                     self.release_prep.auto_running = false;
                     self.release_prep.auto_next_action = None;
+                    let completion = self.operation_tracker.emit_completed(
+                        &OperationKind::ManualAction("repo_open_open"),
+                        OpResult::Failed(msg.clone()),
+                        OpSeverity::Recoverable,
+                    );
                     self.operation.loading = false;
                     self.repo.commits_loading_more = false;
                     self.operation.error = Some(msg);
-                    Task::none()
+                    completion
+                        .map(|event| Task::done(Message::Operation(event)))
+                        .unwrap_or_else(Task::none)
                 }
             },
             RepoOpenMessage::LoadMoreCommitsRequested => self.load_more_commits(),
@@ -201,8 +244,19 @@ impl App {
                         ])
                     }
                     Err(msg) => {
-                        self.operation.error = Some(msg);
-                        Task::none()
+                        let id = self.operation_tracker.next_id();
+                        self.operation.error = Some(msg.clone());
+                        let start = Task::done(Message::Operation(OperationEvent::Started {
+                            id,
+                            kind: OperationKind::ManualAction("repo_open_paginate"),
+                            label: "Loading more commits…".to_string(),
+                        }));
+                        let complete = Task::done(Message::Operation(OperationEvent::Completed {
+                            id,
+                            result: OpResult::Failed(msg),
+                            severity: OpSeverity::Recoverable,
+                        }));
+                        start.chain(complete)
                     }
                 }
             }
@@ -210,10 +264,6 @@ impl App {
                 let avatars = match result {
                     Ok(avatars) => avatars,
                     Err(err) => {
-                        // The missing-CLI notice is one-shot per session (the
-                        // `gh` binary's presence doesn't change mid-session, so
-                        // every avatar load / pagination would otherwise re-toast).
-                        // Other provider errors are transient and reported as-is.
                         if err.contains("could not find") {
                             if !self.provider_cli_notice_shown {
                                 self.provider_cli_notice_shown = true;
@@ -265,8 +315,6 @@ impl App {
                         }
                     }
                 }
-                // The rebase plan resolves avatars through the same lookup,
-                // so route matching results into its rows as well.
                 if let Some(session) = self.rebase.as_mut() {
                     for row in &mut session.plan {
                         if let Some(url) = by_commit.get(&row.commit.id) {
@@ -327,8 +375,20 @@ impl App {
             RepoOpenMessage::CloneClicked => {
                 if self.manager.clone_url.trim().is_empty() {
                     self.manager.clone_open = true;
-                    self.operation.error = Some("Enter a clone URL first.".into());
-                    return Task::none();
+                    let msg = "Enter a clone URL first.".to_string();
+                    let id = self.operation_tracker.next_id();
+                    self.operation.error = Some(msg.clone());
+                    let start = Task::done(Message::Operation(OperationEvent::Started {
+                        id,
+                        kind: OperationKind::ManualAction("repo_open_clone"),
+                        label: "Validating clone URL…".to_string(),
+                    }));
+                    let complete = Task::done(Message::Operation(OperationEvent::Completed {
+                        id,
+                        result: OpResult::Failed(msg),
+                        severity: OpSeverity::Recoverable,
+                    }));
+                    return start.chain(complete);
                 }
 
                 self.operation.error = None;
@@ -341,23 +401,45 @@ impl App {
             RepoOpenMessage::CloneParentPicked(Some(parent)) => {
                 self.operation.loading = true;
                 let url = self.manager.clone_url.clone();
-                Task::perform(repo_open::task::clone_repo(url, parent), |result| {
-                    Message::from(RepoOpenMessage::CloneDone(result))
-                })
+                let start = Task::done(Message::Operation(OperationEvent::Started {
+                    id: self.operation_tracker.next_id(),
+                    kind: OperationKind::ManualAction("repo_open_clone"),
+                    label: format!("Cloning {url}…"),
+                }));
+                start.chain(Task::perform(
+                    repo_open::task::clone_repo(url, parent),
+                    |result| Message::from(RepoOpenMessage::CloneDone(result)),
+                ))
             }
             RepoOpenMessage::CloneDone(Ok(path)) => {
                 self.manager.clone_url.clear();
                 self.manager.clone_open = false;
                 self.operation.loading = true;
-                Task::perform(repo_open::task::load(path), |result| {
+                let start = Task::done(Message::Operation(OperationEvent::Started {
+                    id: self.operation_tracker.next_id(),
+                    kind: OperationKind::ManualAction("repo_open_load"),
+                    label: "Loading cloned repository…".to_string(),
+                }));
+                start.chain(Task::perform(repo_open::task::load(path), |result| {
                     Message::from(RepoOpenMessage::Loaded(Box::new(result)))
-                })
+                }))
             }
             RepoOpenMessage::CloneDone(Err(msg)) => {
+                let id = self.operation_tracker.next_id();
                 self.operation.loading = false;
                 self.manager.clone_open = true;
-                self.operation.error = Some(msg);
-                Task::none()
+                self.operation.error = Some(msg.clone());
+                let start = Task::done(Message::Operation(OperationEvent::Started {
+                    id,
+                    kind: OperationKind::ManualAction("repo_open_clone"),
+                    label: "Cloning repository…".to_string(),
+                }));
+                let complete = Task::done(Message::Operation(OperationEvent::Completed {
+                    id,
+                    result: OpResult::Failed(msg),
+                    severity: OpSeverity::Recoverable,
+                }));
+                start.chain(complete)
             }
             RepoOpenMessage::InitClicked => {
                 self.operation.error = None;
@@ -370,22 +452,99 @@ impl App {
             RepoOpenMessage::InitPathPicked(None) => Task::none(),
             RepoOpenMessage::InitPathPicked(Some(path)) => {
                 self.operation.loading = true;
-                Task::perform(repo_open::task::init(path), |result| {
+                let start = Task::done(Message::Operation(OperationEvent::Started {
+                    id: self.operation_tracker.next_id(),
+                    kind: OperationKind::ManualAction("repo_open_init"),
+                    label: format!("Initializing repository at {}…", path.display()),
+                }));
+                start.chain(Task::perform(repo_open::task::init(path), |result| {
                     Message::from(RepoOpenMessage::InitDone(result))
-                })
+                }))
             }
             RepoOpenMessage::InitDone(Ok(path)) => {
                 self.operation.loading = true;
-                Task::perform(repo_open::task::load(path), |result| {
+                let start = Task::done(Message::Operation(OperationEvent::Started {
+                    id: self.operation_tracker.next_id(),
+                    kind: OperationKind::ManualAction("repo_open_load"),
+                    label: "Loading new repository…".to_string(),
+                }));
+                start.chain(Task::perform(repo_open::task::load(path), |result| {
                     Message::from(RepoOpenMessage::Loaded(Box::new(result)))
-                })
+                }))
             }
             RepoOpenMessage::InitDone(Err(msg)) => {
+                let id = self.operation_tracker.next_id();
                 self.operation.loading = false;
-                self.operation.error = Some(msg);
-                Task::none()
+                self.operation.error = Some(msg.clone());
+                let start = Task::done(Message::Operation(OperationEvent::Started {
+                    id,
+                    kind: OperationKind::ManualAction("repo_open_init"),
+                    label: "Initializing repository…".to_string(),
+                }));
+                let complete = Task::done(Message::Operation(OperationEvent::Completed {
+                    id,
+                    result: OpResult::Failed(msg),
+                    severity: OpSeverity::Recoverable,
+                }));
+                start.chain(complete)
             }
         }
+    }
+
+    fn continue_after_load(
+        &mut self,
+        path: PathBuf,
+        should_auto_fetch_after_load: bool,
+    ) -> Task<Message> {
+        self.refresh_graph_layout();
+        self.catalog.remember(path.clone());
+        let evicted = self.tabs.remember(path.clone());
+        if let Some(evicted) = evicted {
+            self.tabs.cache.remove(&evicted);
+        }
+        self.tabs
+            .last_refreshed
+            .insert(path.clone(), std::time::Instant::now());
+        let terminal_task = self.ensure_repo_terminal_session(
+            path.clone(),
+            self.repo
+                .head_branch
+                .clone()
+                .unwrap_or_else(|| "Current repo".into()),
+        );
+        let save_task = self.save_catalog();
+        let save_tabs_task = self.save_open_tabs();
+        let workspace_task = self.refresh_workspace();
+        let pull_request_task = self.refresh_pull_requests();
+        let commit_avatar_task = self.prefetch_commit_avatars();
+        let provider_commit_avatar_task = self.load_provider_commit_author_avatars(path.clone());
+        let auto_fetch_task = if should_auto_fetch_after_load {
+            self.start_auto_fetch()
+        } else {
+            Task::none()
+        };
+        let select_task = if self.repo.status_detail.is_dirty() {
+            self.select_wip()
+        } else {
+            Task::none()
+        };
+        let release_auto_task = if self.operation.error.is_none() {
+            self.continue_release_prep_auto()
+        } else {
+            Task::none()
+        };
+        Task::batch([
+            save_task,
+            save_tabs_task,
+            workspace_task,
+            pull_request_task,
+            commit_avatar_task,
+            provider_commit_avatar_task,
+            terminal_task,
+            auto_fetch_task,
+            select_task,
+            release_auto_task,
+        ])
     }
 
     pub(crate) fn load_provider_commit_author_avatars(&self, path: PathBuf) -> Task<Message> {

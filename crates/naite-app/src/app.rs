@@ -9,12 +9,13 @@ use crate::features::history;
 use crate::features::rebase::{InteractiveRebaseSession, RebaseApplyMode};
 use crate::state::{
     AvatarCache, BranchCreateBase, BranchCreateState, BranchManageRenameState, CommandPaletteState,
-    CommitFormState, FileInsightState, GitHubIssuesState, HistoryRewordState, OperationState,
-    PreferencesState, PullRequestsState, ReleasePrepState, RepositoryCatalog,
-    RepositoryManagerState, RepositoryState, RepositoryTabsState, SelectionState, SidebarState,
-    StashBranchState, StashCreateState, TagCreateState, TerminalState, UndoCheckpoint,
-    WorkspaceState, WorktreeCreateState,
+    CommitFormState, FileInsightState, GitHubIssuesState, HistoryRewordState, OperationId,
+    OperationState, OperationTracker, PreferencesState, PullRequestsState, ReleasePrepState,
+    RepositoryCatalog, RepositoryManagerState, RepositoryState, RepositoryTabsState,
+    SelectionState, SidebarState, StashBranchState, StashCreateState, TagCreateState,
+    TerminalState, UndoCheckpoint, WorkspaceState, WorktreeCreateState,
 };
+use crate::widgets::Toast;
 
 pub struct App {
     pub(crate) repo: RepositoryState,
@@ -77,6 +78,28 @@ pub struct App {
     /// to the user, so the transient notice isn't re-shown on every avatar
     /// load / pagination during the session.
     pub(crate) provider_cli_notice_shown: bool,
+    /// Active transient notifications rendered by the bottom-right toast
+    /// layer (Task 14). Success pills drain FIFO once their TTL passes;
+    /// failure pills are removed manually via `Message::ToastDismissed`.
+    pub(crate) toasts: Vec<Toast>,
+    /// Cross-cutting operation lifecycle tracker. Features emit
+    /// `Message::Operation` events into the global update arm, which routes
+    /// them here. Consumed by `widgets/status_bar` for the top + bottom
+    /// status bars.
+    pub(crate) operation_tracker: OperationTracker,
+    /// Monotonically increasing animation counter shared by the top status
+    /// bar's spinner glyph and the central progress overlay's moving bar.
+    /// Initialized to 0 and bumped by an 80ms subscription tick (Task 20
+    /// wires the increment). Both widgets index their frame strings off this
+    /// counter so a single tick drives both animations.
+    pub(crate) status_animation_frame: usize,
+    /// `OperationId` currently driving the central progress overlay, if
+    /// any. Recomputed on every `Message::TransientStatusTick` via
+    /// `OperationTracker::should_show_overlay(OVERLAY_TRIGGER_SECS)` —
+    /// ReleasePrep shows immediately, everything else waits 2s. View
+    /// looks the op up by id in `operation_tracker.active()` so a stale
+    /// id never survives a completion between tick and render.
+    pub(crate) overlay_visible: Option<OperationId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -401,8 +424,13 @@ impl App {
             commit_list_scroll_y: 0.0,
             commit_list_viewport_height: 0.0,
             provider_cli_notice_shown: false,
+            toasts: Vec::new(),
+            operation_tracker: OperationTracker::default(),
+            status_animation_frame: 0,
+            overlay_visible: None,
         }
     }
+
     pub(crate) fn visible_commit_indices(&self) -> Vec<usize> {
         let query = self.search_query.trim().to_lowercase();
         if query.is_empty() {
@@ -488,7 +516,11 @@ impl App {
     }
 
     pub(crate) fn error_recovery_action(&self) -> Option<crate::widgets::ErrorRecovery<'static>> {
-        let err = self.operation.error.as_deref()?;
+        let err = self
+            .operation
+            .fatal_error
+            .as_deref()
+            .or(self.operation.error.as_deref())?;
         if !crate::features::push::is_non_fast_forward_rejection(err) {
             return None;
         }

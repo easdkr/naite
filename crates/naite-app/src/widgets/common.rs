@@ -1,10 +1,13 @@
 //! Shared primitives used across more than one widget submodule.
 
+use std::borrow::Cow;
+
 use iced::widget::{button, column, container, row, text, text::Wrapping, Space};
-use iced::{Alignment, Element, Length, Padding};
+use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Theme};
 use naite_core::WorktreeStatusDetail;
 
 use crate::icons::{self, IconName};
+use crate::state::OpSeverity;
 use crate::styles;
 use crate::theme::{self, color};
 use crate::Message;
@@ -33,9 +36,21 @@ pub struct ErrorRecovery<'a> {
 
 pub(super) fn error_card<'a>(
     err: &'a str,
+    severity: OpSeverity,
     recovery: Option<ErrorRecovery<'a>>,
 ) -> Element<'a, Message> {
-    let display_error = crate::error_display::format_git_error_for_display(err);
+    let display_error: Cow<'a, str> = crate::error_display::format_git_error_for_display(err);
+    match severity {
+        OpSeverity::Fatal => fatal_error_card(display_error, recovery),
+        OpSeverity::Recoverable => recoverable_error_card(display_error),
+    }
+}
+
+/// Full blocking card for Fatal errors (with optional recovery action).
+fn fatal_error_card<'a>(
+    display_error: Cow<'a, str>,
+    recovery: Option<ErrorRecovery<'a>>,
+) -> Element<'a, Message> {
     let mut actions = row![].align_y(Alignment::Center).spacing(theme::SP_SM);
     if let Some(recovery) = recovery {
         actions = actions.push(
@@ -72,6 +87,32 @@ pub(super) fn error_card<'a>(
     )
     .padding(theme::SP_LG)
     .style(styles::error_card)
+    .into()
+}
+
+/// Compact pill for Recoverable errors (mirrors `status_bar::error_pill`).
+fn recoverable_error_card<'a>(display_error: Cow<'a, str>) -> Element<'a, Message> {
+    container(
+        row![
+            text("✗")
+                .size(theme::FS_SM)
+                .font(theme::font_semibold())
+                .color(color::DANGER),
+            text(display_error)
+                .size(theme::FS_SM)
+                .font(theme::font_regular())
+                .color(color::TEXT),
+            Space::with_width(Length::Fill),
+            button(text("Dismiss").size(theme::FS_SM).wrapping(Wrapping::None))
+                .padding(Padding::from([2, theme::SP_SM]))
+                .style(styles::subtle_button)
+                .on_press(Message::ClearError),
+        ]
+        .align_y(Alignment::Center)
+        .spacing(theme::SP_SM),
+    )
+    .padding(Padding::from([2, theme::SP_MD]))
+    .style(styles::error_pill)
     .into()
 }
 
@@ -178,6 +219,62 @@ fn action_button_width(label: &str) -> f32 {
     action_label_width(label) + 16.0
 }
 
+const CHAR_WIDTH_PX: f32 = 7.0;
+
+pub(super) fn max_chars_for_width(width_px: f32) -> usize {
+    if width_px <= 0.0 {
+        return 0;
+    }
+    ((width_px / CHAR_WIDTH_PX).floor() as usize)
+        .saturating_sub(1)
+        .max(1)
+}
+
+pub(super) fn truncate_with_ellipsis(s: &str, max_chars: usize) -> String {
+    if max_chars == 0 {
+        return String::new();
+    }
+    let total_width: usize = s.chars().map(display_width).sum();
+    if total_width <= max_chars {
+        return s.to_string();
+    }
+    let mut width = 0usize;
+    let mut out: String = s
+        .chars()
+        .take_while(|ch| {
+            let units = display_width(*ch);
+            if width + units > max_chars.saturating_sub(1) {
+                return false;
+            }
+            width += units;
+            true
+        })
+        .collect();
+    out.push('\u{2026}');
+    out
+}
+
+fn display_width(ch: char) -> usize {
+    match ch as u32 {
+        0x1100..=0x115F
+        | 0x2329..=0x232A
+        | 0x2E80..=0x303E
+        | 0x3041..=0x33FF
+        | 0x3400..=0x4DBF
+        | 0x4E00..=0x9FFF
+        | 0xA000..=0xA4CF
+        | 0xAC00..=0xD7A3
+        | 0xF900..=0xFAFF
+        | 0xFE10..=0xFE19
+        | 0xFE30..=0xFE6F
+        | 0xFF00..=0xFF60
+        | 0xFFE0..=0xFFE6
+        | 0x20000..=0x2FFFD
+        | 0x30000..=0x3FFFD => 2,
+        _ => 1,
+    }
+}
+
 pub(super) fn ghost_icon_button<'a>(icon: IconName, on_press: Message) -> Element<'a, Message> {
     button(icons::icon(icon, 15, color::TEXT_MUTED))
         .padding(Padding::from([4, 6]))
@@ -236,6 +333,24 @@ fn pluralized_count(count: usize, singular: &str, plural: &str) -> String {
     }
 }
 
+pub(crate) fn format_duration_ago(diff_secs: i64) -> String {
+    if diff_secs < 60 {
+        "just now".into()
+    } else if diff_secs < 3600 {
+        format!("{} min ago", diff_secs / 60)
+    } else if diff_secs < 86_400 {
+        format!("{} hr ago", diff_secs / 3600)
+    } else if diff_secs < 604_800 {
+        format!("{} d ago", diff_secs / 86_400)
+    } else if diff_secs < 2_592_000 {
+        format!("{} w ago", diff_secs / 604_800)
+    } else if diff_secs < 31_536_000 {
+        format!("{} mo ago", diff_secs / 2_592_000)
+    } else {
+        format!("{} y ago", diff_secs / 31_536_000)
+    }
+}
+
 pub(super) fn format_relative_time(secs: i64) -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -244,20 +359,76 @@ pub(super) fn format_relative_time(secs: i64) -> String {
         .map(|d| d.as_secs() as i64)
         .unwrap_or(secs);
     let diff = (now_secs - secs).max(0);
+    format_duration_ago(diff)
+}
 
-    if diff < 60 {
-        "just now".into()
-    } else if diff < 3600 {
-        format!("{} min ago", diff / 60)
-    } else if diff < 86_400 {
-        format!("{} hr ago", diff / 3600)
-    } else if diff < 604_800 {
-        format!("{} d ago", diff / 86_400)
-    } else if diff < 2_592_000 {
-        format!("{} w ago", diff / 604_800)
-    } else if diff < 31_536_000 {
-        format!("{} mo ago", diff / 2_592_000)
-    } else {
-        format!("{} y ago", diff / 31_536_000)
+const PROGRESS_TRACK_WIDTH: f32 = 320.0;
+const PROGRESS_SEGMENT_WIDTH: f32 = 92.0;
+
+pub fn spinner_frame(frame: usize) -> &'static str {
+    ["|", "/", "-", "\\"][frame % 4]
+}
+
+pub fn animated_dots(frame: usize) -> &'static str {
+    match (frame / 4) % 4 {
+        0 => "",
+        1 => ".",
+        2 => "..",
+        _ => "...",
     }
+}
+
+pub fn moving_progress_bar(frame: usize) -> Element<'static, Message> {
+    let cycle = (frame % 32) as f32 / 31.0;
+    let lead_width = ease_in_out_sine(cycle) * (PROGRESS_TRACK_WIDTH - PROGRESS_SEGMENT_WIDTH);
+
+    container(
+        row![
+            Space::with_width(Length::Fixed(lead_width)),
+            container(Space::new(
+                Length::Fixed(PROGRESS_SEGMENT_WIDTH),
+                Length::Fixed(3.0)
+            ))
+            .style(progress_segment_style(frame)),
+            Space::with_width(Length::Fill),
+        ]
+        .align_y(Alignment::Center),
+    )
+    .width(Length::Fixed(PROGRESS_TRACK_WIDTH))
+    .height(Length::Fixed(3.0))
+    .style(progress_track_style)
+    .into()
+}
+
+fn progress_track_style(_: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(color::with_alpha(color::BORDER, 0.55))),
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: theme::R_PILL.into(),
+        },
+        ..Default::default()
+    }
+}
+
+fn progress_segment_style(frame: usize) -> impl Fn(&Theme) -> container::Style {
+    let pulse = 0.65
+        + 0.25
+            * (((frame % 16) as f32 / 15.0) * std::f32::consts::TAU)
+                .sin()
+                .abs();
+    move |_| container::Style {
+        background: Some(Background::Color(color::with_alpha(color::ACCENT, pulse))),
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: theme::R_PILL.into(),
+        },
+        ..Default::default()
+    }
+}
+
+pub fn ease_in_out_sine(progress: f32) -> f32 {
+    -(std::f32::consts::PI * progress).cos() / 2.0 + 0.5
 }

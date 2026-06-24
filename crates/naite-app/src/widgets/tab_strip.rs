@@ -178,7 +178,7 @@ fn menu_item<'a>(icon: IconName, label: &'a str, message: Message) -> Element<'a
         ]
         .align_y(Alignment::Center)
         .spacing(theme::SP_SM)
-        .height(Length::Fixed(24.0)),
+        .height(Length::Fixed(TAB_HEIGHT)),
     )
     .padding(Padding::from([0, theme::SP_SM]))
     .width(Length::Fill)

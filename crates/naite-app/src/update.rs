@@ -13,12 +13,13 @@ use crate::features::repo_open;
 use crate::message::{KeyAction, Message, TabsMessage};
 use crate::persistence::{self, OpenTabsSnapshot};
 use crate::state::{
-    BranchCreateState, CommitFormState, FileInsightState, HistoryRewordState, ReleasePrepPhase,
-    RepositoryState, SidebarClickState, StashBranchState, StashCreateState, TagCreateState,
-    TransientStatus,
+    BranchCreateState, CommitFormState, FileInsightState, HistoryRewordState, OpResult, OpSeverity,
+    ReleasePrepPhase, RepositoryState, SidebarClickState, StashBranchState, StashCreateState,
+    TagCreateState, TransientStatus,
 };
 use crate::tasks;
-use crate::widgets::ROW_HEIGHT as COMMIT_ROW_HEIGHT;
+use crate::theme::OVERLAY_TRIGGER_SECS;
+use crate::widgets::{Toast, ROW_HEIGHT as COMMIT_ROW_HEIGHT};
 use crate::App;
 
 const TRANSIENT_STATUS_DURATION: Duration = Duration::from_secs(3);
@@ -67,6 +68,7 @@ impl App {
                 match result {
                     Ok(status_detail) => self.apply_refreshed_status_detail(status_detail),
                     Err(msg) => {
+                        self.toasts.push(Toast::failure(msg.as_str()));
                         self.operation.error = Some(msg);
                         Task::none()
                     }
@@ -324,8 +326,71 @@ impl App {
                 {
                     self.operation.transient_status = None;
                 }
+                self.status_animation_frame = self.status_animation_frame.wrapping_add(1);
+                // Reuse this 250ms tick for toast TTL bookkeeping so the
+                // subscription list stays small. Failure toasts are filtered
+                // out by `is_expired` because they never auto-dismiss.
+                if !self.toasts.is_empty() {
+                    let now = Instant::now();
+                    self.toasts.retain(|toast| !toast.is_expired(now));
+                }
+                // Reuse the same tick for overlay visibility bookkeeping.
+                // ReleasePrep ops surface immediately; everything else
+                // waits for OVERLAY_TRIGGER_SECS of elapsed time so fast
+                // ops never flash the overlay card.
+                self.overlay_visible = self
+                    .operation_tracker
+                    .should_show_overlay(OVERLAY_TRIGGER_SECS);
                 Task::none()
             }
+            Message::ToastDismissed { index } => {
+                if index < self.toasts.len() {
+                    self.toasts.remove(index);
+                }
+                Task::none()
+            }
+            Message::Operation(event) => match event {
+                crate::message::OperationEvent::Started { id, kind, label } => {
+                    let _ = self.operation_tracker.start_with_id(id, kind, label);
+                    Task::none()
+                }
+                crate::message::OperationEvent::StepProgressed {
+                    id,
+                    label,
+                    current,
+                    total,
+                } => {
+                    let _ = self
+                        .operation_tracker
+                        .update_step(id, label, current, total);
+                    Task::none()
+                }
+                crate::message::OperationEvent::Completed {
+                    id,
+                    result,
+                    severity,
+                } => {
+                    if let OpResult::Failed(ref msg) = result {
+                        match severity {
+                            OpSeverity::Recoverable => {
+                                self.toasts.push(Toast::failure(msg.as_str()));
+                            }
+                            OpSeverity::Fatal => {
+                                self.operation.fatal_error = Some(msg.clone());
+                            }
+                        }
+                    }
+                    let _ = self.operation_tracker.complete(id, result, severity);
+                    Task::none()
+                }
+                crate::message::OperationEvent::Dismissed { id } => {
+                    // Errors from the tracker (stale ids, double-dismiss)
+                    // are intentionally swallowed: the UI event is the
+                    // source of truth and a stale dismiss is harmless.
+                    let _ = self.operation_tracker.dismiss(id);
+                    Task::none()
+                }
+            },
             Message::ReleasePrepTick => {
                 if self.release_prep.phase == crate::state::ReleasePrepPhase::Idle {
                     return Task::none();
@@ -347,6 +412,7 @@ impl App {
             Message::CopyText(text) => iced::clipboard::write(text),
             Message::ClearError => {
                 self.operation.error = None;
+                self.operation.fatal_error = None;
                 self.operation.transient_status = None;
                 Task::none()
             }
@@ -1362,6 +1428,7 @@ impl App {
                 }
             }
             TabsMessage::Restored(Err(msg)) => {
+                self.toasts.push(Toast::failure(msg.as_str()));
                 self.operation.error = Some(msg);
                 Task::none()
             }

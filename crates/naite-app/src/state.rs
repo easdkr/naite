@@ -1,6 +1,6 @@
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use iced::{keyboard::Modifiers, Point};
 use naite_core::{
@@ -12,8 +12,12 @@ use naite_core::{
 };
 
 use crate::{
+    features::rebase::RebasePlanRow,
     features::release_prep::ReleasePrepAction,
+    features::repo_open::LoadedRepo,
     features::terminal::{TerminalSessionId, TerminalTarget},
+    message::OperationEvent,
+    theme::OP_HISTORY_CAP,
     BranchDeletePrompt, CheckoutPrompt, DiscardPrompt, ForcePushPrompt, ForceSyncPrompt,
     HistoryPrompt, RebasePrompt, ResetPrompt, StashPrompt, TagDeletePrompt, UndoPrompt,
     WorktreeRemovePrompt,
@@ -148,6 +152,11 @@ pub struct OperationState {
     pub pending_error_after_reload: Option<String>,
     pub pending_force_push_after_reload: bool,
     pub error: Option<String>,
+    /// Severity-Fatal errors that must block the workflow until the user
+    /// intervenes. Surfaced as a blocking card by the central progress
+    /// overlay (Task 19). Recoverable errors stay in `error` and render
+    /// as bottom-right toasts.
+    pub fatal_error: Option<String>,
     pub loading: bool,
     pub auto_fetch_path: Option<PathBuf>,
     pub auto_fetch_last_started: Option<(PathBuf, Instant)>,
@@ -157,6 +166,254 @@ pub struct OperationState {
 pub struct TransientStatus {
     pub message: String,
     pub expires_at: Instant,
+}
+
+pub type OperationId = usize;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum OperationKind {
+    AutoFetch,
+    ReleasePrep,
+    ManualAction(&'static str),
+}
+
+impl OperationKind {
+    pub fn shows_overlay_immediately(&self) -> bool {
+        matches!(self, Self::ReleasePrep)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OpResult {
+    Success,
+    Failed(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpSeverity {
+    Recoverable,
+    Fatal,
+}
+
+#[derive(Debug, Clone)]
+pub struct ActiveOperation {
+    pub id: OperationId,
+    pub kind: OperationKind,
+    pub label: String,
+    pub started_at: Instant,
+    pub step: Option<(usize, usize)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CompletedOperation {
+    pub id: OperationId,
+    /// Pre-positioned for upcoming toast/icon rendering — only `complete()`
+    /// currently writes it, so without this attribute the bin target flags
+    /// it as never-read. Tests and call sites that construct a
+    /// `CompletedOperation` directly still pass it through.
+    #[allow(dead_code)]
+    pub kind: OperationKind,
+    pub label: String,
+    pub completed_at: Instant,
+    pub result: OpResult,
+    pub severity: OpSeverity,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OperationTrackerError {
+    UnknownOperation(OperationId),
+}
+
+#[derive(Debug, Default)]
+pub struct OperationTracker {
+    in_flight: Vec<ActiveOperation>,
+    history: VecDeque<CompletedOperation>,
+    next_id: OperationId,
+    /// Tracks the most recent in-flight id keyed by `OperationKind` so that
+    /// feature update handlers can complete an operation they did not start
+    /// themselves (e.g. `auto_fetch` results arrive on a different message
+    /// path than the start site). The invariant — at most one in-flight
+    /// operation per `OperationKind` — is enforced by the feature guards
+    /// (e.g. `if self.operation.loading { return Task::none(); }`).
+    current: HashMap<OperationKind, OperationId>,
+}
+
+impl OperationTracker {
+    /// Peek the next operation id without starting an operation. Used by
+    /// feature handlers that want to allocate an id up-front and pass it
+    /// through a `Message::Operation(Started { id, .. })` wire event so the
+    /// global `update` arm can call `start_with_id` (preserves Elm-style
+    /// routing — all mutations flow through `Message`).
+    pub fn next_id(&mut self) -> OperationId {
+        self.next_id = self.next_id.wrapping_add(1);
+        self.next_id
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn start(&mut self, kind: OperationKind, label: impl Into<String>) -> OperationId {
+        self.next_id = self.next_id.wrapping_add(1);
+        let id = self.next_id;
+        self.in_flight.push(ActiveOperation {
+            id,
+            kind: kind.clone(),
+            label: label.into(),
+            started_at: Instant::now(),
+            step: None,
+        });
+        self.current.insert(kind, id);
+        id
+    }
+
+    pub fn start_with_id(
+        &mut self,
+        id: OperationId,
+        kind: OperationKind,
+        label: impl Into<String>,
+    ) -> Result<(), OperationTrackerError> {
+        if id == 0 {
+            return Err(OperationTrackerError::UnknownOperation(id));
+        }
+        self.next_id = self.next_id.max(id);
+        self.in_flight.push(ActiveOperation {
+            id,
+            kind: kind.clone(),
+            label: label.into(),
+            started_at: Instant::now(),
+            step: None,
+        });
+        self.current.insert(kind, id);
+        Ok(())
+    }
+
+    pub fn update_step(
+        &mut self,
+        id: OperationId,
+        label: String,
+        current: usize,
+        total: usize,
+    ) -> Result<(), OperationTrackerError> {
+        let op = self
+            .in_flight
+            .iter_mut()
+            .find(|op| op.id == id)
+            .ok_or(OperationTrackerError::UnknownOperation(id))?;
+        op.label = label;
+        op.step = Some((current, total));
+        Ok(())
+    }
+
+    pub fn complete(
+        &mut self,
+        id: OperationId,
+        result: OpResult,
+        severity: OpSeverity,
+    ) -> Result<(), OperationTrackerError> {
+        let pos = self
+            .in_flight
+            .iter()
+            .position(|op| op.id == id)
+            .ok_or(OperationTrackerError::UnknownOperation(id))?;
+        let op = self.in_flight.remove(pos);
+        if self.current.get(&op.kind) == Some(&id) {
+            self.current.remove(&op.kind);
+        }
+        self.evict_history();
+        self.history.push_back(CompletedOperation {
+            id,
+            kind: op.kind,
+            label: op.label,
+            completed_at: Instant::now(),
+            result,
+            severity,
+        });
+        Ok(())
+    }
+
+    /// Look up the in-flight id for a given `OperationKind`, if any. Used by
+    /// feature update handlers that receive completion events (e.g. async
+    /// task results) without having the id in hand.
+    pub fn current_id_for(&self, kind: &OperationKind) -> Option<OperationId> {
+        self.current.get(kind).copied()
+    }
+
+    /// Returns the id of the in-flight operation whose central-progress
+    /// overlay should currently be rendered, if any. Operations whose
+    /// `OperationKind::shows_overlay_immediately()` returns true surface
+    /// without delay; all others wait `threshold_secs` of elapsed time
+    /// so a fast fetch (sub-second) doesn't flash the card.
+    pub fn should_show_overlay(&self, threshold_secs: u64) -> Option<OperationId> {
+        let threshold = Duration::from_secs(threshold_secs);
+        self.in_flight
+            .iter()
+            .find(|op| op.started_at.elapsed() >= threshold || op.kind.shows_overlay_immediately())
+            .map(|op| op.id)
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn fail(
+        &mut self,
+        id: OperationId,
+        error_msg: impl Into<String>,
+        severity: OpSeverity,
+    ) -> Result<(), OperationTrackerError> {
+        self.complete(id, OpResult::Failed(error_msg.into()), severity)
+    }
+
+    pub fn dismiss(&mut self, id: OperationId) -> Result<(), OperationTrackerError> {
+        let pos = self
+            .history
+            .iter()
+            .position(|op| op.id == id)
+            .ok_or(OperationTrackerError::UnknownOperation(id))?;
+        self.history.remove(pos);
+        Ok(())
+    }
+
+    pub fn active(&self) -> &[ActiveOperation] {
+        &self.in_flight
+    }
+
+    /// Look up the in-flight id for `kind` and return a `Completed` event,
+    /// or `None` if no operation of that kind is currently in flight.
+    pub fn emit_completed(
+        &self,
+        kind: &OperationKind,
+        result: OpResult,
+        severity: OpSeverity,
+    ) -> Option<OperationEvent> {
+        let id = self.current_id_for(kind)?;
+        Some(OperationEvent::Completed {
+            id,
+            result,
+            severity,
+        })
+    }
+
+    pub fn recent(&self, n: usize) -> Vec<&CompletedOperation> {
+        if n == 0 || self.history.is_empty() {
+            return Vec::new();
+        }
+        let start = self.history.len().saturating_sub(n);
+        // Use `iter().skip(start)` instead of `as_slices().0[start..]`:
+        // once the VecDeque ring buffer wraps, `as_slices().0` is the first
+        // physical segment and may be shorter than `history.len()`, so
+        // indexing it with a logical index returns wrong data or panics.
+        self.history.iter().skip(start).collect()
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn active_long_running(&self, threshold_secs: u64) -> Option<&ActiveOperation> {
+        let threshold = Duration::from_secs(threshold_secs);
+        self.in_flight
+            .iter()
+            .find(|op| op.started_at.elapsed() >= threshold)
+    }
+
+    fn evict_history(&mut self) {
+        while self.history.len() >= OP_HISTORY_CAP {
+            self.history.pop_front();
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -308,7 +565,7 @@ impl Default for PreferencesState {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default)]
 pub struct ReleasePrepState {
     pub phase: ReleasePrepPhase,
     pub remote: String,
@@ -328,6 +585,67 @@ pub struct ReleasePrepState {
     pub auto_next_action: Option<ReleasePrepAction>,
     pub active_action: Option<ReleasePrepAction>,
     pub completed_actions: Vec<ReleasePrepAction>,
+    pub preparing_step: Option<ReleasePrepStep>,
+    pub completed_preparing_steps: Vec<ReleasePrepStep>,
+    /// Accumulator that the per-step chain in
+    /// `features/release_prep/update.rs` merges each step's contribution
+    /// into. Reset to `Default::default()` at `begin_release_prepare`; once
+    /// all 6 user-visible steps have completed, the accumulated value is
+    /// folded into the final `PrepareOutcome`.
+    pub prepare_acc: PrepareStepOutcome,
+}
+
+/// Ordered phases the release-prep prepare pipeline can be in.
+/// `B0` (operation-state + dirty-worktree pre-flight) runs as part of the
+/// outer `spawn_blocking` guard in `task::prepare` and is not a user-facing
+/// step; the six variants below mirror the six user-visible steps
+/// (B1..B7) the pipeline executes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReleasePrepStep {
+    FetchingRemote,
+    SyncingBranches,
+    CheckingSync,
+    CheckingOutSource,
+    CreatingBackup,
+    BuildingPlan,
+}
+
+impl ReleasePrepStep {
+    pub const TOTAL: usize = 6;
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::FetchingRemote => "Fetching remote refs",
+            Self::SyncingBranches => "Syncing source and target",
+            Self::CheckingSync => "Checking branch sync state",
+            Self::CheckingOutSource => "Checking out source branch",
+            Self::CreatingBackup => "Creating backup branch",
+            Self::BuildingPlan => "Building rebase plan",
+        }
+    }
+
+    pub fn index(self) -> usize {
+        match self {
+            Self::FetchingRemote => 1,
+            Self::SyncingBranches => 2,
+            Self::CheckingSync => 3,
+            Self::CheckingOutSource => 4,
+            Self::CreatingBackup => 5,
+            Self::BuildingPlan => 6,
+        }
+    }
+}
+
+/// Per-step output carried from one step to the next while the release-prep
+/// `prepare()` pipeline is split into individual async steps. Each field is
+/// populated only by the step that produces it.
+#[derive(Debug, Clone, Default)]
+pub struct PrepareStepOutcome {
+    pub sync_check: Option<ReleaseSyncCheck>,
+    pub backup_branch_name: Option<String>,
+    pub plan_entries: Option<Vec<RebasePlanRow>>,
+    pub current_author_email: Option<String>,
+    pub repo_snapshot: Option<LoadedRepo>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

@@ -1119,7 +1119,7 @@ fn folder_item<'a>(
         ]
         .align_y(Alignment::Center)
         .spacing(theme::SP_SM)
-        .height(Length::Fixed(24.0)),
+        .height(Length::Fixed(SIDEBAR_REF_ROW_HEIGHT)),
     )
     .width(Length::Fill)
     .padding(Padding::from([0, theme::SP_MD]))
@@ -1129,11 +1129,14 @@ fn folder_item<'a>(
         path: path.to_string(),
     });
 
-    let pointer_idle_layer = mouse_area(Space::new(Length::Fill, Length::Fixed(24.0)))
-        .interaction(mouse::Interaction::Idle);
+    let pointer_idle_layer = mouse_area(Space::new(
+        Length::Fill,
+        Length::Fixed(SIDEBAR_REF_ROW_HEIGHT),
+    ))
+    .interaction(mouse::Interaction::Idle);
     let item = stack![pressable, pointer_idle_layer]
         .width(Length::Fill)
-        .height(Length::Fixed(24.0));
+        .height(Length::Fixed(SIDEBAR_REF_ROW_HEIGHT));
 
     if let Some(branches) = branch_actions.local_branches {
         mouse_area(item)

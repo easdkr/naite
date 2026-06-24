@@ -38,6 +38,61 @@ pub fn floating_panel(_: &Theme) -> container::Style {
     }
 }
 
+/// Top status bar surface — the strip below the toolbar that surfaces
+/// in-flight operations. Uses SURFACE_TERMINAL (the dedicated "between
+/// SURFACE_1 and SURFACE_2" tone) so it reads as its own surface class
+/// distinct from the SURFACE_1 toolbar above and the BG commit list
+/// below. A hairline top border (BORDER at half alpha) anchors the
+/// strip visually to the toolbar without adding weight.
+pub fn status_bar_surface(_: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(color::SURFACE_TERMINAL)),
+        border: Border {
+            color: color::with_alpha(color::BORDER, 0.55),
+            width: 1.0,
+            radius: iced::border::Radius::default().top(theme::R_SM),
+        },
+        ..Default::default()
+    }
+}
+
+/// Bottom status bar surface — the strip docked against the window
+/// bottom that shows recently-completed operations + dismissable
+/// Recoverable errors. Mirrors the top bar's SURFACE_TERMINAL tone so
+/// both status strips read as the same surface class (consistent
+/// chrome), but uses a hairline BOTTOM border instead of top to anchor
+/// the strip visually to the window edge instead of to the content
+/// above it.
+pub fn bottom_status_bar_surface(_: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(color::SURFACE_TERMINAL)),
+        border: Border {
+            color: color::with_alpha(color::BORDER, 0.55),
+            width: 1.0,
+            radius: iced::border::Radius::default().bottom(theme::R_SM),
+        },
+        ..Default::default()
+    }
+}
+
+/// Danger-tinted pill used for individual Recoverable error entries on
+/// the bottom status bar. Reads as "this is a problem the user should
+/// look at, but it is not blocking" — sits between the quiet
+/// SURFACE_TERMINAL strip and the bold `error_card` used for Fatal
+/// errors. Pill radius matches the chrome of other chips in the app
+/// (commit status badges, command palette chips).
+pub fn error_pill(_: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(color::with_alpha(color::DANGER, 0.14))),
+        border: Border {
+            color: color::with_alpha(color::DANGER, 0.45),
+            width: 1.0,
+            radius: theme::R_PILL.into(),
+        },
+        ..Default::default()
+    }
+}
+
 /// Quiet pill used inside floating panel headers to surface secondary
 /// info (e.g. the running shell's reported title) without competing with
 /// the panel chrome.
@@ -447,6 +502,91 @@ pub fn ghost_action_chip(_: &Theme) -> container::Style {
             color: Color::TRANSPARENT,
             width: 0.0,
             radius: theme::R_SM.into(),
+        },
+        ..Default::default()
+    }
+}
+
+// ---------- toast pills ----------
+
+/// Success-tinted surface for transient success notifications rendered in
+/// the bottom-right toast layer. Mirrors the alpha+border treatment of
+/// `error_card` / `warning_card` so all three severity cards read as the
+/// same design language.
+pub fn toast_pill_success(_: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(color::with_alpha(color::SUCCESS, 0.12))),
+        border: Border {
+            color: color::with_alpha(color::SUCCESS, 0.35),
+            width: 1.0,
+            radius: theme::R_MD.into(),
+        },
+        ..Default::default()
+    }
+}
+
+/// Failure-tinted surface for transient failure notifications rendered in
+/// the bottom-right toast layer. Reuses the same surface recipe as
+/// `error_card` so on-screen errors and toast errors share visual weight.
+pub fn toast_pill_failure(_: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(color::with_alpha(color::DANGER, 0.12))),
+        border: Border {
+            color: color::with_alpha(color::DANGER, 0.35),
+            width: 1.0,
+            radius: theme::R_MD.into(),
+        },
+        ..Default::default()
+    }
+}
+
+/// Compact ghost button used for the toast failure pill's "닫기" affordance.
+/// Stays transparent at rest so it doesn't compete with the surrounding
+/// pill chrome; only lifts to a faint DANGER tint on hover.
+pub fn toast_dismiss_button(_: &Theme, status: button::Status) -> button::Style {
+    let bg = match status {
+        button::Status::Hovered => color::with_alpha(color::DANGER, 0.18),
+        button::Status::Pressed => color::with_alpha(color::DANGER, 0.28),
+        _ => Color::TRANSPARENT,
+    };
+    button::Style {
+        background: Some(Background::Color(bg)),
+        text_color: color::TEXT_MUTED,
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: theme::R_SM.into(),
+        },
+        ..Default::default()
+    }
+}
+
+// ---------- progress overlay ----------
+
+/// Semi-transparent backdrop used behind the central progress overlay
+/// (Task 15). Dims the underlying UI without capturing pointer events —
+/// unlike the modal primitive, the overlay is non-blocking (no
+/// click-to-dismiss; the trigger condition in Task 20 removes it when
+/// the operation completes). The alpha is static (no entry animation);
+/// the animated motion lives on the moving bar inside the card.
+pub fn progress_overlay_backdrop(_: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(color::with_alpha(color::BG, 0.55))),
+        ..Default::default()
+    }
+}
+
+/// Elevated surface card used to host the central progress overlay
+/// (spinner + label + step counter). Sits one step above the dimmed
+/// backdrop via SURFACE_2 fill + hairline BORDER + R_MD, matching the
+/// modal's card surface family so the two feel like the same system.
+pub fn progress_overlay_card(_: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(color::SURFACE_2)),
+        border: Border {
+            color: color::BORDER,
+            width: 1.0,
+            radius: theme::R_MD.into(),
         },
         ..Default::default()
     }

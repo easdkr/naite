@@ -1,6 +1,8 @@
 use iced::Task;
 
 use crate::features::push::{self, Message as PushMessage, PushMode};
+use crate::message::OperationEvent;
+use crate::state::{OpResult, OpSeverity, OperationKind};
 use crate::{features::repo_open, App, Message};
 
 impl App {
@@ -15,12 +17,24 @@ impl App {
                 match self.force_push_prompt_for_current_branch() {
                     Ok(prompt) => {
                         self.selection.force_push_confirmation = Some(prompt);
+                        Task::none()
                     }
                     Err(message) => {
-                        self.operation.error = Some(message);
+                        let id = self.operation_tracker.next_id();
+                        self.operation.error = Some(message.clone());
+                        let start = Task::done(Message::Operation(OperationEvent::Started {
+                            id,
+                            kind: OperationKind::ManualAction("push"),
+                            label: "Preparing force push…".to_string(),
+                        }));
+                        let complete = Task::done(Message::Operation(OperationEvent::Completed {
+                            id,
+                            result: OpResult::Failed(message),
+                            severity: OpSeverity::Recoverable,
+                        }));
+                        start.chain(complete)
                     }
                 }
-                Task::none()
             }
             PushMessage::ForceWithLeaseConfirmed => {
                 self.selection.force_push_confirmation = None;
@@ -31,6 +45,27 @@ impl App {
                 Task::none()
             }
             PushMessage::Done { mode, result } => {
+                let completion = match self
+                    .operation_tracker
+                    .current_id_for(&OperationKind::ManualAction("push"))
+                {
+                    Some(id) => {
+                        let event = match &result {
+                            Ok(()) => OperationEvent::Completed {
+                                id,
+                                result: OpResult::Success,
+                                severity: OpSeverity::Recoverable,
+                            },
+                            Err(message) => OperationEvent::Completed {
+                                id,
+                                result: OpResult::Failed(message.clone()),
+                                severity: OpSeverity::Recoverable,
+                            },
+                        };
+                        Task::done(Message::Operation(event))
+                    }
+                    None => Task::none(),
+                };
                 self.operation.loading = false;
                 self.selection.force_push_confirmation = None;
                 match result {
@@ -40,18 +75,27 @@ impl App {
                             self.operation.pending_transient_status_after_reload =
                                 Some(status_message);
                             self.operation.loading = true;
-                            Task::perform(repo_open::task::load(path), |result| {
-                                Message::from(repo_open::Message::Loaded(Box::new(result)))
-                            })
+                            let reload_start =
+                                Task::done(Message::Operation(OperationEvent::Started {
+                                    id: self.operation_tracker.next_id(),
+                                    kind: OperationKind::ManualAction("repo_open"),
+                                    label: "Reloading repository…".to_string(),
+                                }));
+                            completion.chain(reload_start.chain(Task::perform(
+                                repo_open::task::load(path),
+                                |result| {
+                                    Message::from(repo_open::Message::Loaded(Box::new(result)))
+                                },
+                            )))
                         } else {
                             self.set_transient_status(status_message);
-                            Task::none()
+                            completion
                         }
                     }
                     Err(msg) => {
                         self.operation.pending_transient_status_after_reload = None;
                         self.operation.error = Some(msg);
-                        Task::none()
+                        completion
                     }
                 }
             }
@@ -78,8 +122,13 @@ impl App {
         self.operation.transient_status = None;
         self.operation.pending_transient_status_after_reload = None;
         self.operation.loading = true;
-        Task::perform(push::task::run(path, mode), move |result| {
+        let start = Task::done(Message::Operation(OperationEvent::Started {
+            id: self.operation_tracker.next_id(),
+            kind: OperationKind::ManualAction("push"),
+            label: "Pushing current branch…".to_string(),
+        }));
+        start.chain(Task::perform(push::task::run(path, mode), move |result| {
             Message::from(PushMessage::Done { mode, result })
-        })
+        }))
     }
 }

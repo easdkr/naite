@@ -211,6 +211,17 @@ pub const R_MD: f32 = 5.0;
 pub const R_LG: f32 = 8.0;
 pub const R_PILL: f32 = 999.0;
 
+// Layout, history, and timing tokens — single source of truth for status
+// bars, modals, toasts, the operation tracker, and central overlay
+// thresholds consumed by Wave 2+ feature work.
+pub const MIN_WINDOW_WIDTH: f32 = 1024.0;
+pub const MIN_WINDOW_HEIGHT: f32 = 640.0;
+pub const STATUS_BAR_HEIGHT: f32 = 24.0;
+pub const MAX_MODAL_HEIGHT: f32 = 600.0;
+pub const OVERLAY_TRIGGER_SECS: u64 = 2;
+pub const OP_HISTORY_CAP: usize = 50;
+pub const TOAST_SUCCESS_TTL_SECS: u64 = 3;
+
 /// Custom naite dark theme registered with iced.
 pub fn naite_dark() -> Theme {
     Theme::custom(

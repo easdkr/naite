@@ -3,13 +3,14 @@
 
 mod command_palette;
 mod commit_list;
-mod common;
+pub mod common;
 mod context_menu;
 mod detail_pane;
 mod forms;
 mod modal;
 mod pills;
 mod preferences;
+mod progress_overlay;
 mod prompts;
 mod rebase_editor;
 mod release_prep;
@@ -17,8 +18,10 @@ mod repo_manager;
 mod reset_prompt;
 mod sidebar;
 mod status;
+mod status_bar;
 mod tab_strip;
 mod terminal;
+pub mod toast;
 mod toolbar;
 mod workspace;
 
@@ -34,6 +37,7 @@ pub use forms::{
 };
 pub use modal::{animated_modal, modal, wide_modal};
 pub use preferences::{display_options_panel, shortcut_help_overlay};
+pub use progress_overlay::progress_overlay;
 pub use prompts::{
     branch_delete_prompt, checkout_prompt, discard_prompt, force_push_prompt, force_sync_prompt,
     history_prompt, rebase_prompt, stash_prompt, tag_delete_prompt, undo_prompt,
@@ -45,12 +49,14 @@ pub use reset_prompt::reset_prompt;
 #[cfg(test)]
 pub(crate) use sidebar::is_checkout_supported as sidebar_ref_checkout_supported;
 pub use sidebar::{sidebar, SidebarProps};
+pub use status_bar::{bottom_status_bar, top_status_bar};
 #[cfg(test)]
 pub(crate) use terminal::split_ime_preedit_at_cursor as terminal_split_ime_preedit_at_cursor;
 pub use terminal::{
-    terminal_panel, TERMINAL_CHAR_WIDTH, TERMINAL_LINE_HEIGHT, TERMINAL_PANEL_CHROME,
-    TERMINAL_PANEL_HEIGHT, TERMINAL_PANEL_HEIGHT_MINIMIZED,
+    panel_chrome, terminal_panel, TERMINAL_CHAR_WIDTH, TERMINAL_LINE_HEIGHT, TERMINAL_PANEL_HEIGHT,
+    TERMINAL_PANEL_HEIGHT_MINIMIZED,
 };
+pub use toast::{toast_layer, Toast};
 pub use toolbar::{toolbar, ToolbarProps};
 pub use workspace::workspace_dashboard;
 

@@ -1,0 +1,40 @@
+=== Task 14: Toast Notification Layer ===
+Date: 2026-06-23T09:51:47Z
+
+=== Files Changed ===
+  crates/naite-app/src/widgets/toast.rs (NEW, +236 lines)
+  crates/naite-app/src/widgets/mod.rs (+2 lines: mod toast + pub use)
+  crates/naite-app/src/styles.rs (+58 lines: 3 toast styles)
+  crates/naite-app/src/app.rs (+7 lines: Toast import + toasts field + operation_tracker field)
+  crates/naite-app/src/message.rs (+6 lines: ToastDismissed variant)
+  crates/naite-app/src/update.rs (+19 lines: TTL bookkeeping + ToastDismissed handler + Operation handler)
+  crates/naite-app/src/subscription.rs (+5 lines: tick fires when toasts non-empty)
+
+=== cargo build -p naite-app ===
+warning: function `badge_glyph` is never used
+   --> crates/naite-app/src/widgets/toast.rs:182:4
+    |
+182 | fn badge_glyph(severity: ToastSeverity) -> &'static str {
+    |    ^^^^^^^^^^^
+
+warning: `naite-app` (bin "naite") generated 47 warnings (run `cargo fix --bin "naite" -p naite-app` to apply 4 suggestions)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.70s
+
+=== cargo test --workspace --locked ===
+running 388 tests
+test result: ok. 388 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.39s
+running 265 tests
+test result: ok. 265 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.80s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+=== Task 14 Toast Module Unit Tests ===
+test widgets::toast::tests::severity_drives_auto_dismiss ... ok
+test widgets::toast::tests::failure_toast_never_auto_expires ... ok
+test widgets::toast::tests::success_toast_expires_after_ttl ... ok
+test widgets::toast::tests::visible_toasts_returns_full_slice_when_short ... ok
+test widgets::toast::tests::visible_toasts_returns_last_three_in_order ... ok
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 383 filtered out; finished in 0.00s
+
+=== Warning Count (Pre-positioned for Task 17) ===
+      48

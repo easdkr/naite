@@ -22,6 +22,7 @@ mod tests;
 
 use std::path::PathBuf;
 
+use crate::theme::{MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH};
 use iced::{window, Size, Task};
 use state::ThemePreference;
 
@@ -50,7 +51,7 @@ fn main() -> iced::Result {
         .default_font(theme::font_regular())
         .window(window::Settings {
             size: Size::new(1200.0, 760.0),
-            min_size: Some(Size::new(900.0, 600.0)),
+            min_size: Some(Size::new(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)),
             icon: app_icon::window_icon(),
             ..window::Settings::default()
         })

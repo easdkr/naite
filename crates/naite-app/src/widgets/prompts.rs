@@ -12,6 +12,8 @@ use crate::features::{
 use crate::state::AvatarCache;
 use crate::styles;
 use crate::theme::{self, color};
+
+use super::ROW_HEIGHT;
 use crate::{
     BranchDeletePrompt, BranchDeleteTarget, CheckoutPrompt, DiscardPrompt, DiscardTarget,
     ForcePushPrompt, ForceSyncPrompt, HistoryPrompt, Message, RebasePrompt, StashPrompt,
@@ -467,7 +469,7 @@ pub fn rebase_prompt<'a>(
         RebaseApplyMode::ReleasePromotionAuto => ("Auto promote", styles::danger_button),
     };
 
-    column![
+    let body = column![
         text(prompt.title.clone())
             .size(theme::FS_BASE)
             .font(theme::font_semibold())
@@ -477,6 +479,15 @@ pub fn rebase_prompt<'a>(
             .font(theme::font_regular())
             .color(color::TEXT_MUTED),
         rebase_prompt_preview(prompt, avatars),
+    ]
+    .spacing(theme::SP_MD)
+    .width(Length::Fill);
+
+    column![
+        scrollable(body)
+            .direction(styles::thin_scrollbar_dir())
+            .style(styles::thin_scrollbar)
+            .height(Length::Fill),
         row![
             Space::with_width(Length::Fill),
             prompt_action_button(
@@ -591,7 +602,7 @@ fn rebase_prompt_preview_row<'a>(
         .align_y(Alignment::Center)
         .spacing(theme::SP_SM),
     )
-    .height(Length::Fixed(34.0))
+    .height(Length::Fixed(ROW_HEIGHT))
     .padding(Padding::from([0, 10]))
     .width(Length::Fill)
     .style(styles::rebase_prompt_preview_row)

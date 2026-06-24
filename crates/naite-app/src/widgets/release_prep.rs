@@ -1,15 +1,13 @@
 use iced::widget::{button, checkbox, column, container, pick_list, row, text, text_input, Space};
-use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Theme};
+use iced::{Alignment, Color, Element, Length, Padding};
 use naite_core::{ReleaseBranchSync, ReleaseProfile};
 
 use crate::features::release_prep::{self, ReleasePrepAction};
-use crate::state::ReleasePrepState;
+use crate::state::{ReleasePrepState, ReleasePrepStep};
 use crate::styles;
 use crate::theme::{self, color};
+use crate::widgets::common::{animated_dots, moving_progress_bar, spinner_frame};
 use crate::Message;
-
-const PROGRESS_TRACK_WIDTH: f32 = 320.0;
-const PROGRESS_SEGMENT_WIDTH: f32 = 92.0;
 
 pub fn release_prep_config(state: &ReleasePrepState, loading: bool) -> Element<'_, Message> {
     let can_submit = !loading
@@ -143,9 +141,12 @@ pub fn release_prep_progress(state: &ReleasePrepState) -> Element<'_, Message> {
         moving_progress_bar(state.animation_frame),
         container(
             column![
-                progress_line("Fetching remote refs"),
-                progress_line("Force syncing source and target branches"),
-                progress_line("Building the rebase plan"),
+                step_progress_row(ReleasePrepStep::FetchingRemote, state),
+                step_progress_row(ReleasePrepStep::SyncingBranches, state),
+                step_progress_row(ReleasePrepStep::CheckingSync, state),
+                step_progress_row(ReleasePrepStep::CheckingOutSource, state),
+                step_progress_row(ReleasePrepStep::CreatingBackup, state),
+                step_progress_row(ReleasePrepStep::BuildingPlan, state),
             ]
             .spacing(theme::SP_SM),
         )
@@ -463,88 +464,53 @@ fn release_prep_complete(state: &ReleasePrepState) -> bool {
         .all(|action| state.completed_actions.contains(action))
 }
 
-fn progress_line<'a>(label: &'a str) -> Element<'a, Message> {
+/// Per-step progress row mirroring the `action_row` glyph convention:
+/// spinner+ACCENT while running, ✓+SUCCESS once done, •+TEXT_SUBTLE pending.
+fn step_progress_row<'a>(
+    step: ReleasePrepStep,
+    state: &'a ReleasePrepState,
+) -> Element<'a, Message> {
+    let is_active = state.preparing_step == Some(step);
+    let is_completed = state.completed_preparing_steps.contains(&step);
+    let frame = state.animation_frame;
+
+    let (status_glyph, status_color) = if is_active {
+        (spinner_frame(frame), color::ACCENT)
+    } else if is_completed {
+        ("✓", color::SUCCESS)
+    } else {
+        ("•", color::TEXT_SUBTLE)
+    };
+
+    let label_text = if is_active {
+        format!("{} — running{}", step.label(), animated_dots(frame))
+    } else if is_completed {
+        format!("{} — done", step.label())
+    } else {
+        step.label().to_string()
+    };
+
+    let label_color = if is_active {
+        color::ACCENT
+    } else if is_completed {
+        color::TEXT_SUBTLE
+    } else {
+        color::TEXT
+    };
+
     row![
-        text("-")
+        text(status_glyph)
             .size(theme::FS_SM)
             .font(iced::Font::MONOSPACE)
-            .color(color::TEXT_SUBTLE),
-        text(label)
+            .color(status_color),
+        text(label_text)
             .size(theme::FS_SM)
             .font(theme::font_regular())
-            .color(color::TEXT_SUBTLE),
+            .color(label_color),
     ]
     .align_y(Alignment::Center)
     .spacing(theme::SP_SM)
     .into()
-}
-
-fn spinner_frame(frame: usize) -> &'static str {
-    ["|", "/", "-", "\\"][frame % 4]
-}
-
-fn animated_dots(frame: usize) -> &'static str {
-    match (frame / 4) % 4 {
-        0 => "",
-        1 => ".",
-        2 => "..",
-        _ => "...",
-    }
-}
-
-fn moving_progress_bar(frame: usize) -> Element<'static, Message> {
-    let cycle = (frame % 32) as f32 / 31.0;
-    let lead_width = ease_in_out_sine(cycle) * (PROGRESS_TRACK_WIDTH - PROGRESS_SEGMENT_WIDTH);
-
-    container(
-        row![
-            Space::with_width(Length::Fixed(lead_width)),
-            container(Space::new(
-                Length::Fixed(PROGRESS_SEGMENT_WIDTH),
-                Length::Fixed(3.0)
-            ))
-            .style(progress_segment_style(frame)),
-            Space::with_width(Length::Fill),
-        ]
-        .align_y(Alignment::Center),
-    )
-    .width(Length::Fixed(PROGRESS_TRACK_WIDTH))
-    .height(Length::Fixed(3.0))
-    .style(progress_track_style)
-    .into()
-}
-
-fn progress_track_style(_: &Theme) -> container::Style {
-    container::Style {
-        background: Some(Background::Color(color::with_alpha(color::BORDER, 0.55))),
-        border: Border {
-            color: Color::TRANSPARENT,
-            width: 0.0,
-            radius: theme::R_PILL.into(),
-        },
-        ..Default::default()
-    }
-}
-
-fn progress_segment_style(frame: usize) -> impl Fn(&Theme) -> container::Style {
-    let pulse = 0.65
-        + 0.25
-            * (((frame % 16) as f32 / 15.0) * std::f32::consts::TAU)
-                .sin()
-                .abs();
-    move |_| container::Style {
-        background: Some(Background::Color(color::with_alpha(color::ACCENT, pulse))),
-        border: Border {
-            color: Color::TRANSPARENT,
-            width: 0.0,
-            radius: theme::R_PILL.into(),
-        },
-        ..Default::default()
-    }
-}
-
-fn ease_in_out_sine(progress: f32) -> f32 {
-    -(std::f32::consts::PI * progress).cos() / 2.0 + 0.5
 }
 
 fn field<'a>(

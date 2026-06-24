@@ -1,0 +1,43 @@
+    |
+222 | pub const OP_HISTORY_CAP: usize = 50;
+    |           ^^^^^^^^^^^^^^
+
+warning: constant `TOAST_SUCCESS_TTL_SECS` is never used
+   --> crates/naite-app/src/theme.rs:223:11
+    |
+223 | pub const TOAST_SUCCESS_TTL_SECS: u64 = 3;
+    |           ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `OVERLAY_CARD_WIDTH` is never used
+  --> crates/naite-app/src/widgets/progress_overlay.rs:22:7
+   |
+22 | const OVERLAY_CARD_WIDTH: f32 = 420.0;
+   |       ^^^^^^^^^^^^^^^^^^
+
+warning: function `progress_overlay` is never used
+  --> crates/naite-app/src/widgets/progress_overlay.rs:28:8
+   |
+28 | pub fn progress_overlay<'a>(op: &'a ActiveOperation, frame: usize) -> Element<'a, Message> {
+   |        ^^^^^^^^^^^^^^^^
+
+warning: function `top_status_bar` is never used
+  --> crates/naite-app/src/widgets/status_bar.rs:29:8
+   |
+29 | pub fn top_status_bar<'a>(tracker: &'a OperationTracker, frame: usize) -> Element<'a, Message> {
+   |        ^^^^^^^^^^^^^^
+
+warning: `naite-app` (bin "naite") generated 23 warnings (run `cargo fix --bin "naite" -p naite-app` to apply 4 suggestions)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.74s
+---
+cargo test --workspace --locked
+test result: ok. 378 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.33s
+test result: ok. 265 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.66s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+---
+cargo fmt --all -- --check
+Diff in /Users/june/workspace/personal/naite/crates/naite-app/src/message.rs:13:
+     repo_open, reset, revert, stage, stash, tag, terminal, workspace, worktree,
+ };
+ use crate::state::{
+[31m-    ContextMenuKind, DensityPreference, DiffViewMode, OperationId, SidebarSection,
+DONE
