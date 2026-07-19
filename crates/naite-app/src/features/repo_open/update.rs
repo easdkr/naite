@@ -9,6 +9,14 @@ use crate::persistence;
 use crate::state::{OpResult, OpSeverity, OperationKind, ReleasePrepState};
 use crate::{App, Message};
 
+pub(crate) fn repository_load_completion_event(
+    tracker: &crate::state::OperationTracker,
+    result: OpResult,
+    severity: OpSeverity,
+) -> Option<OperationEvent> {
+    tracker.emit_completed(&OperationKind::RepositoryLoad, result, severity)
+}
+
 impl App {
     pub(crate) fn update_repo_open(&mut self, message: RepoOpenMessage) -> Task<Message> {
         match message {
@@ -28,7 +36,7 @@ impl App {
                 self.operation.loading = true;
                 let start = Task::done(Message::Operation(OperationEvent::Started {
                     id: self.operation_tracker.next_id(),
-                    kind: OperationKind::ManualAction("repo_open_open"),
+                    kind: OperationKind::RepositoryLoad,
                     label: "Opening repository…".to_string(),
                 }));
                 start.chain(Task::perform(repo_open::task::load(path), |result| {
@@ -40,7 +48,7 @@ impl App {
                 self.operation.loading = true;
                 let start = Task::done(Message::Operation(OperationEvent::Started {
                     id: self.operation_tracker.next_id(),
-                    kind: OperationKind::ManualAction("repo_open_open"),
+                    kind: OperationKind::RepositoryLoad,
                     label: format!("Opening {}…", path.display()),
                 }));
                 start.chain(Task::perform(repo_open::task::load(path), |result| {
@@ -93,8 +101,8 @@ impl App {
                     self.repo.sync_status = sync_status;
                     self.repo.operation_state = operation_state;
                     self.repo.status_detail = status_detail;
-                    let completion = self.operation_tracker.emit_completed(
-                        &OperationKind::ManualAction("repo_open_open"),
+                    let completion = repository_load_completion_event(
+                        &self.operation_tracker,
                         OpResult::Success,
                         OpSeverity::Recoverable,
                     );
@@ -202,8 +210,8 @@ impl App {
                     self.operation.pending_force_push_after_reload = false;
                     self.release_prep.auto_running = false;
                     self.release_prep.auto_next_action = None;
-                    let completion = self.operation_tracker.emit_completed(
-                        &OperationKind::ManualAction("repo_open_open"),
+                    let completion = repository_load_completion_event(
+                        &self.operation_tracker,
                         OpResult::Failed(msg.clone()),
                         OpSeverity::Recoverable,
                     );
@@ -417,7 +425,7 @@ impl App {
                 self.operation.loading = true;
                 let start = Task::done(Message::Operation(OperationEvent::Started {
                     id: self.operation_tracker.next_id(),
-                    kind: OperationKind::ManualAction("repo_open_load"),
+                    kind: OperationKind::RepositoryLoad,
                     label: "Loading cloned repository…".to_string(),
                 }));
                 start.chain(Task::perform(repo_open::task::load(path), |result| {
@@ -465,7 +473,7 @@ impl App {
                 self.operation.loading = true;
                 let start = Task::done(Message::Operation(OperationEvent::Started {
                     id: self.operation_tracker.next_id(),
-                    kind: OperationKind::ManualAction("repo_open_load"),
+                    kind: OperationKind::RepositoryLoad,
                     label: "Loading new repository…".to_string(),
                 }));
                 start.chain(Task::perform(repo_open::task::load(path), |result| {

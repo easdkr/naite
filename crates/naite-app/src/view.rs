@@ -202,10 +202,21 @@ impl App {
         .height(Length::Fill);
 
         let mut root = column![toolbar].width(Length::Fill).height(Length::Fill);
-        root = root.push(widgets::top_status_bar(
-            &self.operation_tracker,
-            self.status_animation_frame,
-        ));
+        let last_fetch_completed = self
+            .repo
+            .path
+            .as_ref()
+            .and_then(|path| self.operation.last_fetch_completed.get(path))
+            .copied();
+        root = root.push(widgets::top_status_bar(widgets::TopStatusBarProps {
+            tracker: &self.operation_tracker,
+            frame: self.status_animation_frame,
+            repo_open: self.repo.path.is_some(),
+            sync_status: &self.repo.sync_status,
+            status_detail: &self.repo.status_detail,
+            operation_state: self.repo.operation_state,
+            last_fetch_completed,
+        }));
 
         if self.preferences.display_options_open {
             root = root.push(widgets::display_options_panel(&self.preferences));

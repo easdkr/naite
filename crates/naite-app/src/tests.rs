@@ -5891,6 +5891,163 @@ fn auto_fetch_done_success_resumes_pending_release_prep_auto() {
 }
 
 #[test]
+fn manual_fetch_success_records_last_fetch_completed_for_current_repo() {
+    let path = PathBuf::from("/tmp/naite");
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(path.clone()),
+            ..Default::default()
+        },
+        operation: OperationState {
+            loading: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let before = Instant::now();
+    let _ = app.update(Message::from(fetch::Message::Done {
+        scope: fetch::FetchScope::CurrentRemote,
+        result: Ok(()),
+    }));
+
+    let recorded_at = *app
+        .operation
+        .last_fetch_completed
+        .get(&path)
+        .expect("manual fetch success records last_fetch_completed");
+    assert!(recorded_at >= before);
+}
+
+#[test]
+fn manual_fetch_failure_leaves_last_fetch_completed_untouched() {
+    let path = PathBuf::from("/tmp/naite");
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(path.clone()),
+            ..Default::default()
+        },
+        operation: OperationState {
+            loading: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let _ = app.update(Message::from(fetch::Message::Done {
+        scope: fetch::FetchScope::CurrentRemote,
+        result: Err("network unreachable".into()),
+    }));
+
+    assert!(app.operation.last_fetch_completed.is_empty());
+}
+
+#[test]
+fn auto_fetch_success_records_last_fetch_completed_for_its_path() {
+    let path = PathBuf::from("/tmp/naite");
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(path.clone()),
+            sync_status: BranchSyncStatus {
+                upstream: Some("origin/main".into()),
+                ahead: 0,
+                behind: 0,
+            },
+            ..Default::default()
+        },
+        operation: OperationState {
+            auto_fetch_path: Some(path.clone()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let before = Instant::now();
+    let _ = app.update(Message::from(fetch::Message::AutoDone {
+        path: path.clone(),
+        result: Ok(()),
+    }));
+
+    let recorded_at = *app
+        .operation
+        .last_fetch_completed
+        .get(&path)
+        .expect("auto fetch success records last_fetch_completed");
+    assert!(recorded_at >= before);
+}
+
+#[test]
+fn auto_fetch_success_preserves_last_fetch_times_for_other_repositories() {
+    let first_path = PathBuf::from("/tmp/naite-first");
+    let second_path = PathBuf::from("/tmp/naite-second");
+    let first_completed_at = Instant::now();
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(second_path.clone()),
+            sync_status: BranchSyncStatus {
+                upstream: Some("origin/main".into()),
+                ahead: 0,
+                behind: 0,
+            },
+            ..Default::default()
+        },
+        operation: OperationState {
+            auto_fetch_path: Some(second_path.clone()),
+            last_fetch_completed: HashMap::from([(first_path.clone(), first_completed_at)]),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let _ = app.update(Message::from(fetch::Message::AutoDone {
+        path: second_path.clone(),
+        result: Ok(()),
+    }));
+
+    assert_eq!(
+        app.operation.last_fetch_completed.get(&first_path),
+        Some(&first_completed_at)
+    );
+    assert!(app
+        .operation
+        .last_fetch_completed
+        .contains_key(&second_path));
+}
+
+#[test]
+fn auto_fetch_failure_leaves_last_fetch_completed_untouched() {
+    let path = PathBuf::from("/tmp/naite");
+    let previous = Instant::now();
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(path.clone()),
+            sync_status: BranchSyncStatus {
+                upstream: Some("origin/main".into()),
+                ahead: 0,
+                behind: 0,
+            },
+            ..Default::default()
+        },
+        operation: OperationState {
+            auto_fetch_path: Some(path.clone()),
+            last_fetch_completed: HashMap::from([(path.clone(), previous)]),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let _ = app.update(Message::from(fetch::Message::AutoDone {
+        path: path.clone(),
+        result: Err("network unreachable".into()),
+    }));
+
+    assert_eq!(
+        app.operation.last_fetch_completed,
+        HashMap::from([(path, previous)])
+    );
+}
+
+#[test]
 fn enabled_stash_command_closes_palette_and_opens_form() {
     let mut app = App {
         command_palette: CommandPaletteState {
@@ -9337,6 +9494,34 @@ mod release_prep_step_chain {
     }
 }
 // --- Task 5: OperationTracker state model ---
+
+#[test]
+fn repository_load_completion_targets_the_active_reload_operation() {
+    let mut tracker = OperationTracker::default();
+    let reload_id = tracker.start(OperationKind::RepositoryLoad, "Reloading repository…");
+
+    let event = crate::features::repo_open::update::repository_load_completion_event(
+        &tracker,
+        OpResult::Success,
+        OpSeverity::Recoverable,
+    )
+    .expect("an active repository reload must emit a completion event");
+
+    let crate::message::OperationEvent::Completed {
+        id,
+        result,
+        severity,
+    } = event
+    else {
+        panic!("repository load completion must produce a completed event");
+    };
+    assert_eq!(id, reload_id);
+
+    tracker
+        .complete(id, result, severity)
+        .expect("the emitted event must complete the active reload");
+    assert!(tracker.should_show_overlay(0).is_none());
+}
 
 #[test]
 fn operation_tracker_start_moves_op_into_in_flight_with_no_history() {

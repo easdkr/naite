@@ -49,7 +49,7 @@ pub use reset_prompt::reset_prompt;
 #[cfg(test)]
 pub(crate) use sidebar::is_checkout_supported as sidebar_ref_checkout_supported;
 pub use sidebar::{sidebar, SidebarProps};
-pub use status_bar::{bottom_status_bar, top_status_bar};
+pub use status_bar::{bottom_status_bar, top_status_bar, TopStatusBarProps};
 #[cfg(test)]
 pub(crate) use terminal::split_ime_preedit_at_cursor as terminal_split_ime_preedit_at_cursor;
 pub use terminal::{
