@@ -5,7 +5,8 @@
 //! content. Intended for true blocking flows (multi-field forms); use the
 //! inline cards in `prompts.rs` for lightweight confirmations.
 
-use iced::widget::{container, mouse_area, scrollable, stack, Space};
+use iced::widget::text::Wrapping;
+use iced::widget::{container, mouse_area, scrollable, stack, text, Space};
 use iced::{Background, Border, Element, Length, Padding};
 
 use crate::styles;
@@ -38,6 +39,14 @@ pub fn animated_modal<'a>(
         ease_out_cubic(progress),
         MODAL_MAX_WIDTH,
     )
+}
+
+pub(super) fn modal_action_label<'a>(label: &'a str) -> Element<'a, Message> {
+    text(label)
+        .size(theme::FS_SM)
+        .font(theme::font_semibold())
+        .wrapping(Wrapping::None)
+        .into()
 }
 
 fn modal_with_progress<'a>(

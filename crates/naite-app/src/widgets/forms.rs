@@ -316,10 +316,14 @@ pub fn pull_request_create_prompt<'a>(
         text("Create pull request")
             .size(theme::FS_BASE)
             .font(theme::font_semibold())
+            .width(Length::Fill)
+            .wrapping(Wrapping::WordOrGlyph)
             .color(color::TEXT),
         text("Optional base branch and draft mode")
             .size(theme::FS_SM)
             .font(theme::font_regular())
+            .width(Length::Fill)
+            .wrapping(Wrapping::WordOrGlyph)
             .color(color::TEXT_MUTED),
         Space::with_height(theme::SP_SM),
         text_input("base branch (default: current)", &state.base_branch)
@@ -369,10 +373,14 @@ pub fn pull_request_worktree_prompt<'a>(
         text("PR worktree")
             .size(theme::FS_BASE)
             .font(theme::font_semibold())
+            .width(Length::Fill)
+            .wrapping(Wrapping::WordOrGlyph)
             .color(color::TEXT),
         text(format!("#{} {}", pull_request.number, pull_request.title))
             .size(theme::FS_SM)
             .font(theme::font_regular())
+            .width(Length::Fill)
+            .wrapping(Wrapping::WordOrGlyph)
             .color(color::TEXT_MUTED),
         Space::with_height(theme::SP_SM),
         text_input("worktree path", &state.path)
@@ -390,6 +398,8 @@ pub fn pull_request_worktree_prompt<'a>(
         text("Default is pre-filled. Edit to pick a different sibling directory.")
             .size(theme::FS_XS)
             .font(theme::font_regular())
+            .width(Length::Fill)
+            .wrapping(Wrapping::WordOrGlyph)
             .color(color::TEXT_SUBTLE),
         text_input("local branch (optional)", &state.branch_name)
             .id(branch_input_id.clone())
@@ -427,11 +437,7 @@ pub fn pull_request_worktree_prompt<'a>(
 }
 
 fn modal_button_label<'a>(label: &'a str) -> Element<'a, Message> {
-    text(label)
-        .size(theme::FS_SM)
-        .font(theme::font_semibold())
-        .wrapping(Wrapping::None)
-        .into()
+    super::modal::modal_action_label(label)
 }
 
 pub fn stash_create_prompt<'a>(
@@ -578,12 +584,15 @@ pub fn tag_create_prompt<'a>(
         text("Create tag")
             .size(theme::FS_BASE)
             .font(theme::font_semibold())
+            .width(Length::Fill)
+            .wrapping(Wrapping::WordOrGlyph)
             .color(color::TEXT),
         text(format!("Target: {target}"))
             .size(theme::FS_SM)
             .font(theme::font_regular())
+            .width(Length::Fill)
             .color(color::TEXT_MUTED)
-            .wrapping(Wrapping::Word),
+            .wrapping(Wrapping::WordOrGlyph),
         Space::with_height(theme::SP_SM),
         mode_row,
         text_input("v1.0.0", &state.name)
@@ -598,11 +607,11 @@ pub fn tag_create_prompt<'a>(
         Space::with_height(theme::SP_SM),
         row![
             Space::with_width(Length::Fill),
-            button(text("Cancel").size(theme::FS_SM))
+            button(modal_button_label("Cancel"))
                 .padding(Padding::from([5, 10]))
                 .style(styles::subtle_button)
                 .on_press(Message::from(tag::Message::CreateCancelled)),
-            button(text("Create").size(theme::FS_SM))
+            button(modal_button_label("Create"))
                 .padding(Padding::from([5, 10]))
                 .style(styles::primary_button)
                 .on_press_maybe(

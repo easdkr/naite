@@ -1,5 +1,6 @@
+use iced::widget::text::Wrapping;
 use iced::widget::{button, checkbox, column, container, pick_list, row, text, text_input, Space};
-use iced::{Alignment, Color, Element, Length, Padding};
+use iced::{alignment, Alignment, Color, Element, Length, Padding};
 use naite_core::{ReleaseBranchSync, ReleaseProfile};
 
 use crate::features::release_prep::{self, ReleasePrepAction};
@@ -32,12 +33,17 @@ pub fn release_prep_config(state: &ReleasePrepState, loading: bool) -> Element<'
         text("Release Promotion")
             .size(theme::FS_LG)
             .font(theme::font_semibold())
+            .width(Length::Fill)
+            .wrapping(Wrapping::WordOrGlyph)
             .color(color::TEXT),
         text(hint)
             .size(theme::FS_SM)
             .font(theme::font_regular())
+            .width(Length::Fill)
+            .wrapping(Wrapping::WordOrGlyph)
             .color(color::TEXT_SUBTLE),
     ]
+    .width(Length::Fill)
     .spacing(theme::SP_MD);
 
     if let Some(error) = &state.error {
@@ -87,6 +93,8 @@ pub fn release_prep_config(state: &ReleasePrepState, loading: bool) -> Element<'
         )
         .size(theme::FS_XS)
         .font(theme::font_regular())
+        .width(Length::Fill)
+        .wrapping(Wrapping::WordOrGlyph)
         .color(color::TEXT_MUTED),
     )
     .push(
@@ -101,11 +109,11 @@ pub fn release_prep_config(state: &ReleasePrepState, loading: bool) -> Element<'
     .push(
         row![
             Space::with_width(Length::Fill),
-            button(text("Cancel").size(theme::FS_SM))
+            button(super::modal::modal_action_label("Cancel"))
                 .padding(Padding::from([5, 10]))
                 .style(styles::subtle_button)
                 .on_press(Message::from(release_prep::Message::Cancelled)),
-            button(text("Fetch and open rebase").size(theme::FS_SM))
+            button(super::modal::modal_action_label("Fetch and open rebase"))
                 .padding(Padding::from([5, 10]))
                 .style(styles::primary_button)
                 .on_press_maybe(
@@ -187,6 +195,8 @@ pub fn release_prep_actions(state: &ReleasePrepState, loading: bool) -> Element<
             text("Release promotion")
                 .size(theme::FS_LG)
                 .font(theme::font_semibold())
+                .width(Length::Fill)
+                .wrapping(Wrapping::WordOrGlyph)
                 .color(color::TEXT),
         ]
         .align_y(Alignment::Center)
@@ -194,8 +204,11 @@ pub fn release_prep_actions(state: &ReleasePrepState, loading: bool) -> Element<
         text(profile_label(profile))
             .size(theme::FS_SM)
             .font(theme::font_regular())
+            .width(Length::Fill)
+            .wrapping(Wrapping::WordOrGlyph)
             .color(color::TEXT_SUBTLE),
     ]
+    .width(Length::Fill)
     .spacing(theme::SP_MD);
 
     if loading {
@@ -211,6 +224,8 @@ pub fn release_prep_actions(state: &ReleasePrepState, loading: bool) -> Element<
             ))
             .size(theme::FS_SM)
             .font(theme::font_regular())
+            .width(Length::Fill)
+            .wrapping(Wrapping::WordOrGlyph)
             .color(color::TEXT_MUTED),
         );
     }
@@ -288,13 +303,14 @@ pub fn release_prep_actions(state: &ReleasePrepState, loading: bool) -> Element<
                         text(auto_label_text)
                             .size(theme::FS_SM)
                             .font(theme::font_regular())
+                            .width(Length::Fill)
+                            .wrapping(Wrapping::WordOrGlyph)
                             .color(if auto_running {
                                 color::ACCENT
                             } else {
                                 color::TEXT
                             }),
-                        Space::with_width(Length::Fill),
-                        button(text(auto_button_label).size(theme::FS_SM))
+                        button(super::modal::modal_action_label(auto_button_label))
                             .padding(Padding::from([5, 10]))
                             .style(styles::danger_button)
                             .on_press_maybe(
@@ -312,7 +328,7 @@ pub fn release_prep_actions(state: &ReleasePrepState, loading: bool) -> Element<
         .push(
             row![
                 Space::with_width(Length::Fill),
-                button(text("Close").size(theme::FS_SM))
+                button(super::modal::modal_action_label("Close"))
                     .padding(Padding::from([5, 10]))
                     .style(styles::subtle_button)
                     .on_press_maybe(
@@ -376,7 +392,7 @@ fn validation_script_row(state: &ReleasePrepState, locked: bool) -> Element<'_, 
                 .font(iced::Font::MONOSPACE)
                 .color(status_color),
             input,
-            button(text(button_label).size(theme::FS_SM))
+            button(super::modal::modal_action_label(button_label))
                 .padding(Padding::from([5, 10]))
                 .style(styles::primary_button)
                 .on_press_maybe((!button_locked).then_some(Message::from(
@@ -437,9 +453,10 @@ fn action_row<'a>(
             text(label_text)
                 .size(theme::FS_SM)
                 .font(theme::font_regular())
+                .width(Length::Fill)
+                .wrapping(Wrapping::WordOrGlyph)
                 .color(label_color),
-            Space::with_width(Length::Fill),
-            button(text(button_label).size(theme::FS_SM))
+            button(super::modal::modal_action_label(button_label))
                 .padding(Padding::from([5, 10]))
                 .style(styles::primary_button)
                 .on_press_maybe((!button_locked).then_some(Message::from(
@@ -598,10 +615,12 @@ fn sync_row<'a>(label: &'a str, branch: &'a ReleaseBranchSync) -> Element<'a, Me
                 .size(theme::FS_SM)
                 .font(theme::font_semibold())
                 .color(color::TEXT),
-            Space::with_width(Length::Fill),
             text(format!("{}: {status}", branch.branch))
                 .size(theme::FS_SM)
                 .font(theme::font_regular())
+                .width(Length::Fill)
+                .align_x(alignment::Horizontal::Right)
+                .wrapping(Wrapping::WordOrGlyph)
                 .color(if branch.is_ready() {
                     color::SUCCESS
                 } else {
@@ -621,6 +640,8 @@ fn release_error<'a>(error: &'a str) -> Element<'a, Message> {
         text(message)
             .size(theme::FS_SM)
             .font(theme::font_regular())
+            .width(Length::Fill)
+            .wrapping(Wrapping::WordOrGlyph)
             .color(color::DANGER),
     )
     .padding(theme::SP_MD)
