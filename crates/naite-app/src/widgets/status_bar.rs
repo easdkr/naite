@@ -1,90 +1,247 @@
 //! Status strips:
 //!
-//! - [`top_status_bar`] — strip below the toolbar showing in-flight
-//!   operations from `tracker.active()` with animated spinners.
+//! - [`top_status_bar`] — strip below the toolbar. When idle, renders a
+//!   repo-status summary (branch sync, change/conflict counts, in-flight
+//!   merge/rebase labels, "Fetched N min ago"). When operations are
+//!   active, renders animated spinners for each on the right while the
+//!   summary stays anchored on the left.
 //! - [`bottom_status_bar`] — strip docked against the window bottom
 //!   showing recently-completed operations (success/failure glyphs +
 //!   relative time-ago) and dismissable pills for Recoverable errors.
 //!   Fatal errors are deliberately NOT rendered here — Task 19 routes
 //!   them through a blocking modal instead.
 //!
-//! Both widgets are pure: they read the `OperationTracker` and emit an
-//! `Element`. Integration (driving the `frame` counter from a tick
-//! subscription, placing both strips in `view.rs`) lives in Task 17.
+//! Both widgets are pure: they read the `OperationTracker` (and, for the
+//! top bar, the current repo's `BranchSyncStatus` / `WorktreeStatusDetail`
+//! / `GitOperationState` / last-fetch `Instant`) and emit an `Element`.
+//! Integration (driving the `frame` counter from a tick subscription,
+//! placing both strips in `view.rs`) lives outside this module.
 
 use std::time::Instant;
 
 use iced::widget::{button, container, row, text, text::Wrapping, Space};
 use iced::{Alignment, Element, Length, Padding};
+use naite_core::{BranchSyncStatus, GitOperationState, WorktreeStatusDetail};
 
 use crate::message::OperationEvent;
-use crate::state::{CompletedOperation, OpResult, OpSeverity, OperationId, OperationTracker};
+use crate::state::{
+    ActiveOperation, CompletedOperation, OpResult, OpSeverity, OperationId, OperationTracker,
+};
 use crate::styles;
 use crate::theme::{self, color};
-use crate::widgets::common::{format_duration_ago, spinner_frame, truncate_with_ellipsis};
+use crate::widgets::common::{
+    format_duration_ago, spinner_frame, status_summary_title, truncate_with_ellipsis,
+};
 use crate::Message;
+
+/// Inputs for the top status bar. `last_fetch_completed` is pre-filtered
+/// by the caller: it should be `Some(instant)` only when the recorded
+/// fetch completion belongs to the currently open repo (see
+/// `OperationState::last_fetch_completed`).
+pub struct TopStatusBarProps<'a> {
+    pub tracker: &'a OperationTracker,
+    pub frame: usize,
+    pub repo_open: bool,
+    pub sync_status: &'a BranchSyncStatus,
+    pub status_detail: &'a WorktreeStatusDetail,
+    pub operation_state: GitOperationState,
+    pub last_fetch_completed: Option<Instant>,
+}
 
 /// Render the top status bar.
 ///
-/// - When `tracker.active()` is empty, returns a `Space` of
-///   `STATUS_BAR_HEIGHT` so the vertical slot is preserved (no UI jump
-///   when operations start/stop).
-/// - When there are in-flight operations, renders each as
-///   `spinner | label [: current/total]` in a horizontally-spaced row.
-///   The `frame` argument is the 80ms-spaced animation counter supplied
-///   by the caller (Task 17 will wire the tick).
-pub fn top_status_bar<'a>(tracker: &'a OperationTracker, frame: usize) -> Element<'a, Message> {
-    let active = tracker.active();
+/// The strip always paints its surface. When a repo is open, the idle
+/// repo-status summary is rendered on the left; when operations are
+/// in flight, their spinners are appended on the right (separated by a
+/// fill spacer so the left summary stays anchored). With no repo open
+/// the strip is an empty painted band — no layout jump when a repo is
+/// opened or closed.
+pub fn top_status_bar<'a>(props: TopStatusBarProps<'a>) -> Element<'a, Message> {
+    let active = props.tracker.active();
+    let mut row = row![]
+        .align_y(Alignment::Center)
+        .spacing(theme::SP_LG)
+        .padding([0, theme::SP_LG]);
 
-    if active.is_empty() {
-        // No operations in flight: reserve the slot but draw nothing.
-        Space::with_height(Length::Fixed(theme::STATUS_BAR_HEIGHT)).into()
-    } else {
-        let mut row = row![]
-            .align_y(Alignment::Center)
-            .spacing(theme::SP_LG)
-            .padding([0, theme::SP_LG]);
+    if props.repo_open {
+        row = row.push(idle_summary(&props));
+    }
 
-        // Each in-flight operation gets one entry: animated spinner +
-        // label + optional "current/total" step counter.
+    if !active.is_empty() {
+        if props.repo_open {
+            row = row.push(Space::with_width(Length::Fill));
+        }
         for (idx, op) in active.iter().enumerate() {
             if idx > 0 {
-                // Visual separator between concurrent operations.
-                row = row.push(
-                    text("·")
-                        .size(theme::FS_SM)
-                        .font(theme::font_regular())
-                        .color(color::TEXT_SUBTLE),
-                );
+                row = row.push(separator_glyph());
             }
-
-            let spinner = text(spinner_frame(frame))
-                .size(theme::FS_SM)
-                .font(theme::font_regular())
-                .wrapping(Wrapping::None)
-                .color(color::ACCENT);
-
-            let label_text = match op.step {
-                Some((current, total)) => format!("{}: {}/{}", op.label, current, total),
-                None => op.label.clone(),
-            };
-
-            let label = text(label_text)
-                .size(theme::FS_SM)
-                .font(theme::font_regular())
-                .wrapping(Wrapping::None)
-                .color(color::TEXT_MUTED);
-
-            row = row.push(spinner).push(label);
+            row = row.push(active_op_segment(op, props.frame));
         }
+    }
 
-        container(row)
-            .width(Length::Fill)
-            .height(Length::Fixed(theme::STATUS_BAR_HEIGHT))
+    container(row)
+        .width(Length::Fill)
+        .height(Length::Fixed(theme::STATUS_BAR_HEIGHT))
+        .align_y(Alignment::Center)
+        .style(styles::status_bar_surface)
+        .into()
+}
+
+fn idle_summary(props: &TopStatusBarProps<'_>) -> Element<'static, Message> {
+    let mut segments: Vec<Element<'static, Message>> = Vec::new();
+
+    segments.push(sync_segment(props.sync_status));
+    segments.push(changes_segment(props.status_detail));
+    segments.extend(operation_state_labels(props.operation_state).map(|label| {
+        text(label)
+            .size(theme::FS_SM)
+            .font(theme::font_semibold())
+            .wrapping(Wrapping::None)
+            .color(color::WARNING)
+            .into()
+    }));
+    if let Some(instant) = props.last_fetch_completed {
+        segments.push(
+            text(fetched_ago_text(instant))
+                .size(theme::FS_SM)
+                .font(theme::font_regular())
+                .wrapping(Wrapping::None)
+                .color(color::TEXT_SUBTLE)
+                .into(),
+        );
+    }
+
+    let mut joined = row![].align_y(Alignment::Center).spacing(theme::SP_MD);
+    for (idx, segment) in segments.into_iter().enumerate() {
+        if idx > 0 {
+            joined = joined.push(separator_glyph());
+        }
+        joined = joined.push(segment);
+    }
+    joined.into()
+}
+
+fn sync_segment(sync_status: &BranchSyncStatus) -> Element<'static, Message> {
+    match sync_status_text(sync_status) {
+        Some(label) => text(label)
+            .size(theme::FS_SM)
+            .font(theme::font_regular())
+            .wrapping(Wrapping::None)
+            .color(color::TEXT_MUTED)
+            .into(),
+        None => text("no upstream")
+            .size(theme::FS_SM)
+            .font(theme::font_regular())
+            .wrapping(Wrapping::None)
+            .color(color::TEXT_SUBTLE)
+            .into(),
+    }
+}
+
+fn changes_segment(status_detail: &WorktreeStatusDetail) -> Element<'static, Message> {
+    let title = status_summary_title(status_detail);
+    let title_color = if status_detail.is_dirty() {
+        color::TEXT_MUTED
+    } else {
+        color::TEXT_SUBTLE
+    };
+
+    let title_text = text(title)
+        .size(theme::FS_SM)
+        .font(theme::font_regular())
+        .wrapping(Wrapping::None)
+        .color(title_color);
+
+    if status_detail.conflicted.is_empty() {
+        title_text.into()
+    } else {
+        let conflict = text(conflict_count_text(status_detail.conflicted.len()))
+            .size(theme::FS_SM)
+            .font(theme::font_regular())
+            .wrapping(Wrapping::None)
+            .color(color::DANGER);
+        row![title_text, separator_glyph(), conflict]
             .align_y(Alignment::Center)
-            .style(styles::status_bar_surface)
+            .spacing(theme::SP_MD)
             .into()
     }
+}
+
+fn active_op_segment(op: &ActiveOperation, frame: usize) -> Element<'_, Message> {
+    let spinner = text(spinner_frame(frame))
+        .size(theme::FS_SM)
+        .font(theme::font_regular())
+        .wrapping(Wrapping::None)
+        .color(color::ACCENT);
+
+    let label_text = match op.step {
+        Some((current, total)) => format!("{}: {}/{}", op.label, current, total),
+        None => op.label.clone(),
+    };
+
+    let label = text(label_text)
+        .size(theme::FS_SM)
+        .font(theme::font_regular())
+        .wrapping(Wrapping::None)
+        .color(color::TEXT_MUTED);
+
+    row![spinner, label]
+        .align_y(Alignment::Center)
+        .spacing(theme::SP_SM)
+        .into()
+}
+
+fn sync_status_text(sync_status: &BranchSyncStatus) -> Option<String> {
+    let upstream = sync_status.upstream.as_deref()?;
+    match (sync_status.ahead, sync_status.behind) {
+        (0, 0) => Some(format!("{upstream} synced")),
+        (ahead, 0) => Some(format!("{upstream} ahead {ahead}")),
+        (0, behind) => Some(format!("{upstream} behind {behind}")),
+        (ahead, behind) => Some(format!("{upstream} ahead {ahead} / behind {behind}")),
+    }
+}
+
+fn conflict_count_text(count: usize) -> String {
+    if count == 1 {
+        "1 conflicted".into()
+    } else {
+        format!("{count} conflicted")
+    }
+}
+
+fn operation_state_labels(state: GitOperationState) -> OperationStateLabels {
+    OperationStateLabels {
+        rebase: state.rebase_in_progress,
+        merge: state.merge_in_progress,
+    }
+}
+
+struct OperationStateLabels {
+    rebase: bool,
+    merge: bool,
+}
+
+impl Iterator for OperationStateLabels {
+    type Item = &'static str;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.rebase {
+            self.rebase = false;
+            return Some("Rebase in progress");
+        }
+        if self.merge {
+            self.merge = false;
+            return Some("Merge in progress");
+        }
+        None
+    }
+}
+
+fn fetched_ago_text(completed_at: Instant) -> String {
+    format!(
+        "Fetched {}",
+        format_duration_ago(completed_at.elapsed().as_secs() as i64)
+    )
 }
 
 /// Maximum number of completed operations to show on the bottom bar.
@@ -249,6 +406,7 @@ fn format_instant_ago(instant: Instant) -> String {
 mod tests {
     use super::*;
     use crate::state::{OperationKind, OperationTracker};
+    use naite_core::StatusEntry;
 
     #[test]
     fn bottom_bar_returns_reserved_space_when_history_empty() {
@@ -297,5 +455,136 @@ mod tests {
     fn truncate_error_returns_no_detail_for_empty_message() {
         assert_eq!(truncate_error(""), "(no detail)");
         assert_eq!(truncate_error("   "), "(no detail)");
+    }
+
+    #[test]
+    fn sync_status_text_renders_all_upstream_states() {
+        let mk = |upstream: Option<&str>, ahead: u32, behind: u32| BranchSyncStatus {
+            upstream: upstream.map(Into::into),
+            ahead,
+            behind,
+        };
+
+        assert_eq!(
+            sync_status_text(&mk(Some("origin/main"), 0, 0)).as_deref(),
+            Some("origin/main synced")
+        );
+        assert_eq!(
+            sync_status_text(&mk(Some("origin/main"), 3, 0)).as_deref(),
+            Some("origin/main ahead 3")
+        );
+        assert_eq!(
+            sync_status_text(&mk(Some("origin/main"), 0, 2)).as_deref(),
+            Some("origin/main behind 2")
+        );
+        assert_eq!(
+            sync_status_text(&mk(Some("origin/main"), 1, 4)).as_deref(),
+            Some("origin/main ahead 1 / behind 4")
+        );
+        assert!(sync_status_text(&mk(None, 0, 0)).is_none());
+    }
+
+    #[test]
+    fn fetched_ago_text_uses_just_now_for_now() {
+        assert_eq!(fetched_ago_text(Instant::now()), "Fetched just now");
+    }
+
+    #[test]
+    fn operation_state_labels_covers_rebase_merge_both_and_neither() {
+        let neither = GitOperationState {
+            rebase_in_progress: false,
+            merge_in_progress: false,
+        };
+        assert_eq!(
+            operation_state_labels(neither).collect::<Vec<_>>(),
+            Vec::<&str>::new()
+        );
+
+        let rebase_only = GitOperationState {
+            rebase_in_progress: true,
+            merge_in_progress: false,
+        };
+        assert_eq!(
+            operation_state_labels(rebase_only).collect::<Vec<_>>(),
+            vec!["Rebase in progress"]
+        );
+
+        let merge_only = GitOperationState {
+            rebase_in_progress: false,
+            merge_in_progress: true,
+        };
+        assert_eq!(
+            operation_state_labels(merge_only).collect::<Vec<_>>(),
+            vec!["Merge in progress"]
+        );
+
+        let both = GitOperationState {
+            rebase_in_progress: true,
+            merge_in_progress: true,
+        };
+        assert_eq!(
+            operation_state_labels(both).collect::<Vec<_>>(),
+            vec!["Rebase in progress", "Merge in progress"]
+        );
+    }
+
+    #[test]
+    fn conflict_count_text_singular_plural() {
+        assert_eq!(conflict_count_text(1), "1 conflicted");
+        assert_eq!(conflict_count_text(3), "3 conflicted");
+    }
+
+    #[test]
+    fn top_status_bar_renders_painted_band_for_empty_tracker() {
+        let tracker = OperationTracker::default();
+        let sync_status = BranchSyncStatus {
+            upstream: Some("origin/main".into()),
+            ahead: 0,
+            behind: 0,
+        };
+        let status_detail = WorktreeStatusDetail::default();
+        let props = TopStatusBarProps {
+            tracker: &tracker,
+            frame: 0,
+            repo_open: true,
+            sync_status: &sync_status,
+            status_detail: &status_detail,
+            operation_state: GitOperationState::default(),
+            last_fetch_completed: Some(Instant::now()),
+        };
+        let _ = top_status_bar(props);
+    }
+
+    #[test]
+    fn top_status_bar_painted_band_with_no_repo_open() {
+        let tracker = OperationTracker::default();
+        let sync_status = BranchSyncStatus::default();
+        let status_detail = WorktreeStatusDetail::default();
+        let props = TopStatusBarProps {
+            tracker: &tracker,
+            frame: 0,
+            repo_open: false,
+            sync_status: &sync_status,
+            status_detail: &status_detail,
+            operation_state: GitOperationState::default(),
+            last_fetch_completed: None,
+        };
+        let _ = top_status_bar(props);
+    }
+
+    #[test]
+    fn changes_segment_switches_color_for_dirty_worktree() {
+        let dirty = WorktreeStatusDetail {
+            unstaged: vec![StatusEntry {
+                path: "a.rs".into(),
+                old_path: None,
+                status: naite_core::StatusKind::Modified,
+            }],
+            ..Default::default()
+        };
+        let _ = changes_segment(&dirty);
+
+        let clean = WorktreeStatusDetail::default();
+        let _ = changes_segment(&clean);
     }
 }

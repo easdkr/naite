@@ -17,6 +17,7 @@ use crate::App;
 const TRANSIENT_STATUS_TICK: Duration = Duration::from_millis(250);
 const RELEASE_PREP_TICK: Duration = Duration::from_millis(80);
 const AUTO_FETCH_INTERVAL: Duration = Duration::from_secs(60);
+const STATUS_BAR_IDLE_TICK: Duration = Duration::from_secs(30);
 
 impl App {
     pub(crate) fn subscription(&self) -> Subscription<Message> {
@@ -60,6 +61,21 @@ impl App {
         }
         if self.repo.path.is_some() && self.repo.sync_status.upstream.is_some() {
             subscriptions.push(time::every(AUTO_FETCH_INTERVAL).map(|_| Message::AutoFetchTick));
+        }
+        // The 30s idle tick refreshes the "Fetched N min ago" label in the
+        // top status bar when the 250ms transient-status tick is not firing
+        // (no active ops). Gated on `last_fetch_completed` matching the
+        // current repo path so the subscription only exists while the label
+        // is actually being rendered for the open repo.
+        let status_bar_idle_active = self
+            .operation
+            .last_fetch_completed
+            .as_ref()
+            .and_then(|(path, _)| self.repo.path.as_ref().map(|current| current == path))
+            .unwrap_or(false)
+            && self.operation_tracker.active().is_empty();
+        if status_bar_idle_active {
+            subscriptions.push(time::every(STATUS_BAR_IDLE_TICK).map(|_| Message::StatusBarTick));
         }
 
         Subscription::batch(subscriptions)

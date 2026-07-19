@@ -85,21 +85,6 @@ pub fn toolbar<'a>(props: ToolbarProps<'a>) -> Element<'a, Message> {
         _ => Space::new(0.0, 0.0).into(),
     };
 
-    let sync_label: Element<'a, Message> = sync_status_text(sync_status)
-        .map(|label| {
-            container(
-                text(label)
-                    .size(theme::FS_SM)
-                    .font(theme::font_regular())
-                    .wrapping(Wrapping::None)
-                    .color(color::TEXT_SUBTLE),
-            )
-            .padding(Padding::from([3, 8]))
-            .style(styles::pill_chip)
-            .into()
-        })
-        .unwrap_or_else(|| Space::new(0.0, 0.0).into());
-
     let search = text_input("Filter commits...", search_query)
         .id(search_input_id.clone())
         .on_input(Message::SearchChanged)
@@ -237,7 +222,6 @@ pub fn toolbar<'a>(props: ToolbarProps<'a>) -> Element<'a, Message> {
         row![
             title,
             branch_chip,
-            sync_label,
             Space::with_width(Length::Fill),
             icons::icon(IconName::Search, 14, color::TEXT_SUBTLE),
             search,
@@ -372,16 +356,6 @@ fn compact_text(value: &str, max_chars: usize) -> String {
 
     let head: String = value.chars().take(max_chars - 3).collect();
     format!("{head}...")
-}
-
-fn sync_status_text(sync_status: &BranchSyncStatus) -> Option<String> {
-    let upstream = sync_status.upstream.as_deref()?;
-    match (sync_status.ahead, sync_status.behind) {
-        (0, 0) => Some(format!("{upstream} synced")),
-        (ahead, 0) => Some(format!("{upstream} ahead {ahead}")),
-        (0, behind) => Some(format!("{upstream} behind {behind}")),
-        (ahead, behind) => Some(format!("{upstream} ahead {ahead} / behind {behind}")),
-    }
 }
 
 #[cfg(test)]

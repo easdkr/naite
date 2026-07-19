@@ -317,6 +317,7 @@ impl App {
                 Task::none()
             }
             Message::AutoFetchTick => self.start_auto_fetch(),
+            Message::StatusBarTick => Task::none(),
             Message::TransientStatusTick => {
                 if self
                     .operation

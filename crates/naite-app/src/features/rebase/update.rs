@@ -685,7 +685,7 @@ impl App {
                     self.operation.loading = true;
                     let reload_start = Task::done(Message::Operation(OperationEvent::Started {
                         id: self.operation_tracker.next_id(),
-                        kind: OperationKind::ManualAction("repo_open"),
+                        kind: OperationKind::RepositoryLoad,
                         label: "Reloading repository…".to_string(),
                     }));
                     completion.chain(
@@ -709,7 +709,7 @@ impl App {
                     self.operation.loading = true;
                     let reload_start = Task::done(Message::Operation(OperationEvent::Started {
                         id: self.operation_tracker.next_id(),
-                        kind: OperationKind::ManualAction("repo_open_reload"),
+                        kind: OperationKind::RepositoryLoad,
                         label: "Reloading repository…".to_string(),
                     }));
                     completion.chain(

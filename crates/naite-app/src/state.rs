@@ -160,6 +160,13 @@ pub struct OperationState {
     pub loading: bool,
     pub auto_fetch_path: Option<PathBuf>,
     pub auto_fetch_last_started: Option<(PathBuf, Instant)>,
+    /// Path-keyed recording of the most recent successful fetch completion.
+    /// The top status bar renders "Fetched {n min ago}" off the entry whose
+    /// path matches the currently open repo, so repo switches need no reset.
+    /// Only `fetch::update.rs` writes this on `FetchMessage::Done` /
+    /// `FetchMessage::AutoDone` success arms — pull/release-prep fetches are
+    /// intentionally not tracked here.
+    pub last_fetch_completed: Option<(PathBuf, Instant)>,
 }
 
 #[derive(Debug, Clone)]
@@ -173,6 +180,7 @@ pub type OperationId = usize;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum OperationKind {
     AutoFetch,
+    RepositoryLoad,
     ReleasePrep,
     ManualAction(&'static str),
 }

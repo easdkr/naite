@@ -98,6 +98,11 @@ pub enum Message {
     AutoFetchTick,
     TransientStatusTick,
     ReleasePrepTick,
+    /// 30s idle tick that refreshes the "Fetched N min ago" label in the
+    /// top status bar when no other tick is firing. Subscription is gated
+    /// on `last_fetch_completed` matching the current repo path and the
+    /// operation tracker being empty, so it only runs when needed.
+    StatusBarTick,
     /// Manual dismissal of a failure toast from the bottom-right layer.
     /// `index` targets the toast's position in `App::toasts`; out-of-bounds
     /// indices are silently ignored so the UI cannot panic on stale events.
