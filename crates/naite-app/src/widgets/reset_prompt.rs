@@ -21,17 +21,24 @@ pub fn reset_prompt<'a>(prompt: &'a ResetPrompt, loading: bool) -> Element<'a, M
         text(title)
             .size(theme::FS_BASE)
             .font(theme::font_semibold())
+            .width(Length::Fill)
+            .wrapping(Wrapping::WordOrGlyph)
             .color(color::TEXT),
         column![
             text(detail)
                 .size(theme::FS_SM)
                 .font(theme::font_regular())
+                .width(Length::Fill)
+                .wrapping(Wrapping::WordOrGlyph)
                 .color(color::TEXT_MUTED),
             text(format!("Subject: {}", prompt.target.summary))
                 .size(theme::FS_SM)
                 .font(theme::font_regular())
+                .width(Length::Fill)
+                .wrapping(Wrapping::WordOrGlyph)
                 .color(color::TEXT_MUTED),
         ]
+        .width(Length::Fill)
         .spacing(2),
         column![
             mode_hint("Soft", "keep changes staged"),
@@ -41,24 +48,24 @@ pub fn reset_prompt<'a>(prompt: &'a ResetPrompt, loading: bool) -> Element<'a, M
         .spacing(2),
         row![
             Space::with_width(Length::Fill),
-            button(text("Cancel").size(theme::FS_SM).wrapping(Wrapping::None))
+            button(super::modal::modal_action_label("Cancel"))
                 .padding(Padding::from([5, 10]))
                 .style(styles::subtle_button)
                 .on_press(Message::from(reset::Message::Cancelled)),
-            button(text("Soft").size(theme::FS_SM).wrapping(Wrapping::None))
+            button(super::modal::modal_action_label("Soft"))
                 .padding(Padding::from([5, 10]))
                 .style(styles::subtle_button)
                 .on_press_maybe(
                     (!loading).then_some(Message::from(reset::Message::Confirmed(ResetMode::Soft)))
                 ),
-            button(text("Mixed").size(theme::FS_SM).wrapping(Wrapping::None))
+            button(super::modal::modal_action_label("Mixed"))
                 .padding(Padding::from([5, 10]))
                 .style(styles::subtle_button)
                 .on_press_maybe(
                     (!loading)
                         .then_some(Message::from(reset::Message::Confirmed(ResetMode::Mixed)))
                 ),
-            button(text("Hard").size(theme::FS_SM).wrapping(Wrapping::None))
+            button(super::modal::modal_action_label("Hard"))
                 .padding(Padding::from([5, 10]))
                 .style(styles::danger_button)
                 .on_press_maybe(

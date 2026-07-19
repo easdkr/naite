@@ -28,39 +28,46 @@ pub fn checkout_prompt<'a>(prompt: &'a CheckoutPrompt) -> Element<'a, Message> {
         yes_no(prompt.status.has_untracked)
     );
 
-    container(
+    column![
+        column![
+            text(format!(
+                "Worktree has local changes before checkout {}",
+                prompt.target.short_name
+            ))
+            .size(theme::FS_BASE)
+            .font(theme::font_semibold())
+            .width(Length::Fill)
+            .wrapping(Wrapping::WordOrGlyph)
+            .color(color::TEXT),
+            text(detail)
+                .size(theme::FS_SM)
+                .font(theme::font_regular())
+                .width(Length::Fill)
+                .wrapping(Wrapping::WordOrGlyph)
+                .color(color::TEXT_MUTED),
+        ]
+        .width(Length::Fill)
+        .spacing(2),
         row![
-            column![
-                text(format!(
-                    "Worktree has local changes before checkout {}",
-                    prompt.target.short_name
-                ))
-                .size(theme::FS_BASE)
-                .font(theme::font_semibold())
-                .color(color::TEXT),
-                text(detail)
-                    .size(theme::FS_SM)
-                    .font(theme::font_regular())
-                    .color(color::TEXT_MUTED),
-            ]
-            .spacing(2),
             Space::with_width(Length::Fill),
-            button(text("Cancel").size(theme::FS_SM))
-                .padding(Padding::from([5, 10]))
-                .style(styles::subtle_button)
-                .on_press(Message::from(checkout::Message::Cancelled)),
-            button(text("Force checkout").size(theme::FS_SM))
-                .padding(Padding::from([5, 10]))
-                .style(styles::danger_button)
-                .on_press(Message::from(checkout::Message::Confirmed {
+            prompt_action_button(
+                "Cancel",
+                styles::subtle_button,
+                Some(Message::from(checkout::Message::Cancelled)),
+            ),
+            prompt_action_button(
+                "Force checkout",
+                styles::danger_button,
+                Some(Message::from(checkout::Message::Confirmed {
                     target: prompt.target.clone(),
                     force: true,
                 })),
+            ),
         ]
         .align_y(Alignment::Center)
         .spacing(theme::SP_MD),
-    )
-    .padding(theme::SP_MD)
+    ]
+    .spacing(theme::SP_MD)
     .width(Length::Fill)
     .into()
 }
@@ -86,18 +93,25 @@ pub fn force_sync_prompt<'a>(prompt: &'a ForceSyncPrompt, loading: bool) -> Elem
         ))
         .size(theme::FS_SM)
         .font(theme::font_regular())
+        .width(Length::Fill)
+        .wrapping(Wrapping::WordOrGlyph)
         .color(color::TEXT_MUTED),
         text(status_detail)
             .size(theme::FS_SM)
             .font(theme::font_regular())
+            .width(Length::Fill)
+            .wrapping(Wrapping::WordOrGlyph)
             .color(color::TEXT_MUTED),
     ]
+    .width(Length::Fill)
     .spacing(2);
     if let Some(sync_detail) = sync_detail {
         details = details.push(
             text(sync_detail)
                 .size(theme::FS_SM)
                 .font(theme::font_regular())
+                .width(Length::Fill)
+                .wrapping(Wrapping::WordOrGlyph)
                 .color(color::TEXT_MUTED),
         );
     }
@@ -109,22 +123,24 @@ pub fn force_sync_prompt<'a>(prompt: &'a ForceSyncPrompt, loading: bool) -> Elem
         ))
         .size(theme::FS_BASE)
         .font(theme::font_semibold())
+        .width(Length::Fill)
+        .wrapping(Wrapping::WordOrGlyph)
         .color(color::TEXT),
         details,
         row![
             Space::with_width(Length::Fill),
-            button(text("Cancel").size(theme::FS_SM))
-                .padding(Padding::from([5, 10]))
-                .style(styles::subtle_button)
-                .on_press(Message::from(checkout::Message::Cancelled)),
-            button(text("Reset local branch").size(theme::FS_SM))
-                .padding(Padding::from([5, 10]))
-                .style(styles::danger_button)
-                .on_press_maybe((!loading).then_some(Message::from(
-                    checkout::Message::ForceSyncConfirmed {
-                        target: prompt.target.clone(),
-                    },
-                ))),
+            prompt_action_button(
+                "Cancel",
+                styles::subtle_button,
+                Some(Message::from(checkout::Message::Cancelled)),
+            ),
+            prompt_action_button(
+                "Reset local branch",
+                styles::danger_button,
+                (!loading).then_some(Message::from(checkout::Message::ForceSyncConfirmed {
+                    target: prompt.target.clone(),
+                },)),
+            ),
         ]
         .align_y(Alignment::Center)
         .spacing(theme::SP_SM),
@@ -139,34 +155,43 @@ pub fn force_push_prompt<'a>(prompt: &'a ForcePushPrompt, loading: bool) -> Elem
         text(format!("Update remote {}", prompt.branch))
             .size(theme::FS_BASE)
             .font(theme::font_semibold())
+            .width(Length::Fill)
+            .wrapping(Wrapping::WordOrGlyph)
             .color(color::TEXT),
         column![
             text(format!("Remote branch: {}", prompt.upstream))
                 .size(theme::FS_SM)
                 .font(theme::font_regular())
+                .width(Length::Fill)
+                .wrapping(Wrapping::WordOrGlyph)
                 .color(color::TEXT_MUTED),
             text(format!("New tip: {}", prompt.head_short_id))
                 .size(theme::FS_SM)
                 .font(theme::font_regular())
+                .width(Length::Fill)
+                .wrapping(Wrapping::WordOrGlyph)
                 .color(color::TEXT_MUTED),
             text("If the remote changed since the last fetch, naite will stop before updating it.")
                 .size(theme::FS_SM)
                 .font(theme::font_regular())
+                .width(Length::Fill)
+                .wrapping(Wrapping::WordOrGlyph)
                 .color(color::TEXT_MUTED),
         ]
+        .width(Length::Fill)
         .spacing(2),
         row![
             Space::with_width(Length::Fill),
-            button(text("Cancel").size(theme::FS_SM))
-                .padding(Padding::from([5, 10]))
-                .style(styles::subtle_button)
-                .on_press(Message::from(push::Message::ForceWithLeaseCancelled)),
-            button(text("Update remote").size(theme::FS_SM))
-                .padding(Padding::from([5, 10]))
-                .style(styles::danger_button)
-                .on_press_maybe(
-                    (!loading).then_some(Message::from(push::Message::ForceWithLeaseConfirmed))
-                ),
+            prompt_action_button(
+                "Cancel",
+                styles::subtle_button,
+                Some(Message::from(push::Message::ForceWithLeaseCancelled)),
+            ),
+            prompt_action_button(
+                "Update remote",
+                styles::danger_button,
+                (!loading).then_some(Message::from(push::Message::ForceWithLeaseConfirmed)),
+            ),
         ]
         .align_y(Alignment::Center)
         .spacing(theme::SP_SM),
@@ -263,43 +288,56 @@ pub fn branch_delete_prompt<'a>(
         None
     };
     let can_delete = !loading && (linked_count == 0 || prompt.delete_linked_worktrees);
+    let mut options = column![].spacing(theme::SP_SM).width(Length::Fill);
+    if matching_local_toggle.is_some() {
+        options = options.push(maybe_matching_local_toggle_button(
+            matching_local_toggle,
+            prompt.delete_matching_local_branches,
+        ));
+    }
+    if linked_worktree_toggle.is_some() {
+        options = options.push(maybe_linked_worktree_toggle_button(
+            linked_worktree_toggle,
+            prompt.delete_linked_worktrees,
+        ));
+    }
+    if force_linked_worktree_toggle.is_some() {
+        options = options.push(maybe_force_linked_worktree_toggle_button(
+            force_linked_worktree_toggle,
+            prompt.force_linked_worktrees,
+        ));
+    }
 
     column![
         column![
             text(title)
                 .size(theme::FS_BASE)
                 .font(theme::font_semibold())
+                .width(Length::Fill)
+                .wrapping(Wrapping::WordOrGlyph)
                 .color(color::TEXT),
             text(detail)
                 .size(theme::FS_SM)
                 .font(theme::font_regular())
+                .width(Length::Fill)
+                .wrapping(Wrapping::WordOrGlyph)
                 .color(color::TEXT_MUTED),
         ]
+        .width(Length::Fill)
         .spacing(2),
+        options,
         row![
-            maybe_matching_local_toggle_button(
-                matching_local_toggle,
-                prompt.delete_matching_local_branches
-            ),
-            maybe_linked_worktree_toggle_button(
-                linked_worktree_toggle,
-                prompt.delete_linked_worktrees
-            ),
-            maybe_force_linked_worktree_toggle_button(
-                force_linked_worktree_toggle,
-                prompt.force_linked_worktrees
-            ),
             Space::with_width(Length::Fill),
-            button(text("Cancel").size(theme::FS_SM))
-                .padding(Padding::from([5, 10]))
-                .style(styles::subtle_button)
-                .on_press(Message::from(branch_manage::Message::DeleteCancelled)),
-            button(text("Delete").size(theme::FS_SM))
-                .padding(Padding::from([5, 10]))
-                .style(styles::danger_button)
-                .on_press_maybe(
-                    can_delete.then_some(Message::from(branch_manage::Message::DeleteConfirmed))
-                ),
+            prompt_action_button(
+                "Cancel",
+                styles::subtle_button,
+                Some(Message::from(branch_manage::Message::DeleteCancelled)),
+            ),
+            prompt_action_button(
+                "Delete",
+                styles::danger_button,
+                can_delete.then_some(Message::from(branch_manage::Message::DeleteConfirmed)),
+            ),
         ]
         .align_y(Alignment::Center)
         .spacing(theme::SP_MD),
@@ -314,7 +352,7 @@ fn maybe_matching_local_toggle_button<'a>(
     checked: bool,
 ) -> Element<'a, Message> {
     if let Some(label) = label {
-        button(text(label).size(theme::FS_SM))
+        button(text(label).size(theme::FS_SM).wrapping(Wrapping::None))
             .padding(Padding::from([5, 10]))
             .style(styles::subtle_button)
             .on_press(Message::from(
@@ -391,66 +429,78 @@ pub fn discard_prompt<'a>(prompt: &'a DiscardPrompt, loading: bool) -> Element<'
         ),
     };
 
-    container(
+    column![
+        column![
+            text(title)
+                .size(theme::FS_BASE)
+                .font(theme::font_semibold())
+                .width(Length::Fill)
+                .wrapping(Wrapping::WordOrGlyph)
+                .color(color::TEXT),
+            text(detail)
+                .size(theme::FS_SM)
+                .font(theme::font_regular())
+                .width(Length::Fill)
+                .wrapping(Wrapping::WordOrGlyph)
+                .color(color::TEXT_MUTED),
+        ]
+        .width(Length::Fill)
+        .spacing(2),
         row![
-            column![
-                text(title)
-                    .size(theme::FS_BASE)
-                    .font(theme::font_semibold())
-                    .color(color::TEXT),
-                text(detail)
-                    .size(theme::FS_SM)
-                    .font(theme::font_regular())
-                    .color(color::TEXT_MUTED),
-            ]
-            .width(Length::Fill)
-            .spacing(2),
-            button(text("Cancel").size(theme::FS_SM).wrapping(Wrapping::None))
-                .padding(Padding::from([5, 10]))
-                .width(Length::Fixed(88.0))
-                .style(styles::subtle_button)
-                .on_press(Message::from(discard::Message::Cancelled)),
-            button(text("Discard").size(theme::FS_SM).wrapping(Wrapping::None))
-                .padding(Padding::from([5, 10]))
-                .width(Length::Fixed(104.0))
-                .style(styles::danger_button)
-                .on_press_maybe((!loading).then_some(Message::from(discard::Message::Confirmed))),
+            Space::with_width(Length::Fill),
+            prompt_action_button(
+                "Cancel",
+                styles::subtle_button,
+                Some(Message::from(discard::Message::Cancelled)),
+            ),
+            prompt_action_button(
+                "Discard",
+                styles::danger_button,
+                (!loading).then_some(Message::from(discard::Message::Confirmed)),
+            ),
         ]
         .align_y(Alignment::Center)
         .spacing(theme::SP_MD),
-    )
-    .padding(theme::SP_MD)
+    ]
+    .spacing(theme::SP_MD)
     .width(Length::Fill)
     .into()
 }
 pub fn history_prompt<'a>(prompt: &'a HistoryPrompt, loading: bool) -> Element<'a, Message> {
-    container(
+    column![
+        column![
+            text(prompt.operation.title())
+                .size(theme::FS_BASE)
+                .font(theme::font_semibold())
+                .width(Length::Fill)
+                .wrapping(Wrapping::WordOrGlyph)
+                .color(color::TEXT),
+            text(prompt.operation.detail())
+                .size(theme::FS_SM)
+                .font(theme::font_regular())
+                .width(Length::Fill)
+                .wrapping(Wrapping::WordOrGlyph)
+                .color(color::TEXT_MUTED),
+        ]
+        .width(Length::Fill)
+        .spacing(2),
         row![
-            column![
-                text(prompt.operation.title())
-                    .size(theme::FS_BASE)
-                    .font(theme::font_semibold())
-                    .color(color::TEXT),
-                text(prompt.operation.detail())
-                    .size(theme::FS_SM)
-                    .font(theme::font_regular())
-                    .color(color::TEXT_MUTED),
-            ]
-            .spacing(2),
             Space::with_width(Length::Fill),
-            button(text("Cancel").size(theme::FS_SM))
-                .padding(Padding::from([5, 10]))
-                .style(styles::subtle_button)
-                .on_press(Message::from(history::Message::Cancelled)),
-            button(text(prompt.operation.button_label()).size(theme::FS_SM))
-                .padding(Padding::from([5, 10]))
-                .style(styles::danger_button)
-                .on_press_maybe((!loading).then_some(Message::from(history::Message::Confirmed))),
+            prompt_action_button(
+                "Cancel",
+                styles::subtle_button,
+                Some(Message::from(history::Message::Cancelled)),
+            ),
+            prompt_action_button(
+                prompt.operation.button_label(),
+                styles::danger_button,
+                (!loading).then_some(Message::from(history::Message::Confirmed)),
+            ),
         ]
         .align_y(Alignment::Center)
         .spacing(theme::SP_MD),
-    )
-    .padding(theme::SP_MD)
+    ]
+    .spacing(theme::SP_MD)
     .width(Length::Fill)
     .into()
 }
@@ -473,10 +523,14 @@ pub fn rebase_prompt<'a>(
         text(prompt.title.clone())
             .size(theme::FS_BASE)
             .font(theme::font_semibold())
+            .width(Length::Fill)
+            .wrapping(Wrapping::WordOrGlyph)
             .color(color::TEXT),
         text(prompt.detail.clone())
             .size(theme::FS_SM)
             .font(theme::font_regular())
+            .width(Length::Fill)
+            .wrapping(Wrapping::WordOrGlyph)
             .color(color::TEXT_MUTED),
         rebase_prompt_preview(prompt, avatars),
     ]
@@ -643,49 +697,44 @@ fn prompt_action_button<'a>(
 }
 
 fn prompt_action_label<'a>(label: &'a str) -> Element<'a, Message> {
-    container(
-        text(label)
-            .size(theme::FS_SM)
-            .font(theme::font_semibold())
-            .wrapping(Wrapping::None),
-    )
-    .center_x(Length::Fixed(prompt_action_label_width(label)))
-    .into()
-}
-
-fn prompt_action_label_width(label: &str) -> f32 {
-    let text_width = label.chars().count() as f32 * 7.0;
-    (text_width + 2.0).clamp(46.0, 140.0)
+    super::modal::modal_action_label(label)
 }
 
 pub fn tag_delete_prompt<'a>(prompt: &'a TagDeletePrompt, loading: bool) -> Element<'a, Message> {
-    container(
+    column![
+        column![
+            text(format!("Delete tag {}", prompt.target.short_name))
+                .size(theme::FS_BASE)
+                .font(theme::font_semibold())
+                .width(Length::Fill)
+                .wrapping(Wrapping::WordOrGlyph)
+                .color(color::TEXT),
+            text("Runs git tag --delete for the selected tag.")
+                .size(theme::FS_SM)
+                .font(theme::font_regular())
+                .width(Length::Fill)
+                .wrapping(Wrapping::WordOrGlyph)
+                .color(color::TEXT_MUTED),
+        ]
+        .width(Length::Fill)
+        .spacing(2),
         row![
-            column![
-                text(format!("Delete tag {}", prompt.target.short_name))
-                    .size(theme::FS_BASE)
-                    .font(theme::font_semibold())
-                    .color(color::TEXT),
-                text("Runs git tag --delete for the selected tag.")
-                    .size(theme::FS_SM)
-                    .font(theme::font_regular())
-                    .color(color::TEXT_MUTED),
-            ]
-            .spacing(2),
             Space::with_width(Length::Fill),
-            button(text("Cancel").size(theme::FS_SM))
-                .padding(Padding::from([5, 10]))
-                .style(styles::subtle_button)
-                .on_press(Message::from(tag::Message::DeleteCancelled)),
-            button(text("Delete").size(theme::FS_SM))
-                .padding(Padding::from([5, 10]))
-                .style(styles::danger_button)
-                .on_press_maybe((!loading).then_some(Message::from(tag::Message::DeleteConfirmed))),
+            prompt_action_button(
+                "Cancel",
+                styles::subtle_button,
+                Some(Message::from(tag::Message::DeleteCancelled)),
+            ),
+            prompt_action_button(
+                "Delete",
+                styles::danger_button,
+                (!loading).then_some(Message::from(tag::Message::DeleteConfirmed)),
+            ),
         ]
         .align_y(Alignment::Center)
         .spacing(theme::SP_MD),
-    )
-    .padding(theme::SP_MD)
+    ]
+    .spacing(theme::SP_MD)
     .width(Length::Fill)
     .into()
 }
@@ -702,35 +751,40 @@ pub fn undo_prompt<'a>(prompt: &'a UndoPrompt, loading: bool) -> Element<'a, Mes
         .take(7)
         .collect::<String>();
 
-    container(
+    column![
+        column![
+            text(format!("{action} {}", prompt.checkpoint.label))
+                .size(theme::FS_BASE)
+                .font(theme::font_semibold())
+                .width(Length::Fill)
+                .wrapping(Wrapping::WordOrGlyph)
+                .color(color::TEXT),
+            text(format!("Runs git reset --hard {short}."))
+                .size(theme::FS_SM)
+                .font(theme::font_regular())
+                .width(Length::Fill)
+                .wrapping(Wrapping::WordOrGlyph)
+                .color(color::TEXT_MUTED),
+        ]
+        .width(Length::Fill)
+        .spacing(2),
         row![
-            column![
-                text(format!("{action} {}", prompt.checkpoint.label))
-                    .size(theme::FS_BASE)
-                    .font(theme::font_semibold())
-                    .color(color::TEXT),
-                text(format!("Runs git reset --hard {short}."))
-                    .size(theme::FS_SM)
-                    .font(theme::font_regular())
-                    .color(color::TEXT_MUTED),
-            ]
-            .spacing(2),
             Space::with_width(Length::Fill),
-            button(text("Cancel").size(theme::FS_SM))
-                .padding(Padding::from([5, 10]))
-                .style(styles::subtle_button)
-                .on_press(Message::from(history::Message::UndoCancelled)),
-            button(text(action).size(theme::FS_SM))
-                .padding(Padding::from([5, 10]))
-                .style(styles::danger_button)
-                .on_press_maybe(
-                    (!loading).then_some(Message::from(history::Message::UndoConfirmed))
-                ),
+            prompt_action_button(
+                "Cancel",
+                styles::subtle_button,
+                Some(Message::from(history::Message::UndoCancelled)),
+            ),
+            prompt_action_button(
+                action,
+                styles::danger_button,
+                (!loading).then_some(Message::from(history::Message::UndoConfirmed)),
+            ),
         ]
         .align_y(Alignment::Center)
         .spacing(theme::SP_MD),
-    )
-    .padding(theme::SP_MD)
+    ]
+    .spacing(theme::SP_MD)
     .width(Length::Fill)
     .into()
 }
@@ -749,48 +803,45 @@ pub fn worktree_remove_prompt<'a>(
         !prompt.delete_branch,
     ));
 
-    container(
+    column![
         column![
-            column![
-                text(format!("Remove worktree {}", prompt.target.path.display()))
-                    .size(theme::FS_BASE)
-                    .font(theme::font_semibold())
-                    .width(Length::Fill)
-                    .wrapping(Wrapping::WordOrGlyph)
-                    .color(color::TEXT),
-                text(format!("Branch: {branch}. Runs git worktree remove."))
-                    .size(theme::FS_SM)
-                    .font(theme::font_regular())
-                    .width(Length::Fill)
-                    .wrapping(Wrapping::WordOrGlyph)
-                    .color(color::TEXT_MUTED),
-            ]
-            .width(Length::Fill)
-            .spacing(2),
-            row![
-                Space::with_width(Length::Fill),
-                prompt_action_button(
-                    delete_label,
-                    styles::subtle_button,
-                    Some(toggle_delete_branch),
-                ),
-                prompt_action_button(
-                    "Cancel",
-                    styles::subtle_button,
-                    Some(Message::from(worktree::Message::RemoveCancelled)),
-                ),
-                prompt_action_button(
-                    "Remove",
-                    styles::danger_button,
-                    (!loading).then_some(Message::from(worktree::Message::RemoveConfirmed)),
-                ),
-            ]
-            .align_y(Alignment::Center)
-            .spacing(theme::SP_MD),
+            text(format!("Remove worktree {}", prompt.target.path.display()))
+                .size(theme::FS_BASE)
+                .font(theme::font_semibold())
+                .width(Length::Fill)
+                .wrapping(Wrapping::WordOrGlyph)
+                .color(color::TEXT),
+            text(format!("Branch: {branch}. Runs git worktree remove."))
+                .size(theme::FS_SM)
+                .font(theme::font_regular())
+                .width(Length::Fill)
+                .wrapping(Wrapping::WordOrGlyph)
+                .color(color::TEXT_MUTED),
         ]
+        .width(Length::Fill)
+        .spacing(2),
+        row![
+            Space::with_width(Length::Fill),
+            prompt_action_button(
+                delete_label,
+                styles::subtle_button,
+                Some(toggle_delete_branch),
+            ),
+            prompt_action_button(
+                "Cancel",
+                styles::subtle_button,
+                Some(Message::from(worktree::Message::RemoveCancelled)),
+            ),
+            prompt_action_button(
+                "Remove",
+                styles::danger_button,
+                (!loading).then_some(Message::from(worktree::Message::RemoveConfirmed)),
+            ),
+        ]
+        .align_y(Alignment::Center)
         .spacing(theme::SP_MD),
-    )
-    .padding(theme::SP_MD)
+    ]
+    .spacing(theme::SP_MD)
     .width(Length::Fill)
     .into()
 }
@@ -817,33 +868,40 @@ pub fn stash_prompt<'a>(prompt: &'a StashPrompt, loading: bool) -> Element<'a, M
         ),
     };
 
-    container(
+    column![
+        column![
+            text(title)
+                .size(theme::FS_BASE)
+                .font(theme::font_semibold())
+                .width(Length::Fill)
+                .wrapping(Wrapping::WordOrGlyph)
+                .color(color::TEXT),
+            text(detail)
+                .size(theme::FS_SM)
+                .font(theme::font_regular())
+                .width(Length::Fill)
+                .wrapping(Wrapping::WordOrGlyph)
+                .color(color::TEXT_MUTED),
+        ]
+        .width(Length::Fill)
+        .spacing(2),
         row![
-            column![
-                text(title)
-                    .size(theme::FS_BASE)
-                    .font(theme::font_semibold())
-                    .color(color::TEXT),
-                text(detail)
-                    .size(theme::FS_SM)
-                    .font(theme::font_regular())
-                    .color(color::TEXT_MUTED),
-            ]
-            .spacing(2),
             Space::with_width(Length::Fill),
-            button(text("Cancel").size(theme::FS_SM))
-                .padding(Padding::from([5, 10]))
-                .style(styles::subtle_button)
-                .on_press(Message::from(stash::Message::ConfirmationCancelled)),
-            button(text(action_label).size(theme::FS_SM))
-                .padding(Padding::from([5, 10]))
-                .style(styles::danger_button)
-                .on_press_maybe((!loading).then_some(Message::from(stash::Message::Confirmed))),
+            prompt_action_button(
+                "Cancel",
+                styles::subtle_button,
+                Some(Message::from(stash::Message::ConfirmationCancelled)),
+            ),
+            prompt_action_button(
+                action_label,
+                styles::danger_button,
+                (!loading).then_some(Message::from(stash::Message::Confirmed)),
+            ),
         ]
         .align_y(Alignment::Center)
         .spacing(theme::SP_MD),
-    )
-    .padding(theme::SP_MD)
+    ]
+    .spacing(theme::SP_MD)
     .width(Length::Fill)
     .into()
 }
@@ -861,5 +919,17 @@ fn yes_no(value: bool) -> &'static str {
         "yes"
     } else {
         "no"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prompt_action_label_uses_natural_width_for_long_labels() {
+        let label = prompt_action_label("Delete linked worktrees and matching local branches");
+
+        assert_eq!(label.as_widget().size().width, Length::Shrink);
     }
 }

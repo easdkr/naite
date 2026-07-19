@@ -10,8 +10,9 @@
 //! that shows this overlay. release_prep's full per-step glyph list
 //! is added by Task 21.
 
+use iced::widget::text::Wrapping;
 use iced::widget::{column, container, stack, text, Space};
-use iced::{Alignment, Element, Length, Padding};
+use iced::{alignment, Alignment, Element, Length, Padding};
 
 use crate::state::ActiveOperation;
 use crate::styles;
@@ -32,24 +33,7 @@ pub fn progress_overlay<'a>(op: &'a ActiveOperation, frame: usize) -> Element<'a
         .style(styles::progress_overlay_backdrop)
         .into();
 
-    let mut card_content = column![
-        moving_progress_bar(frame),
-        text(&op.label)
-            .size(theme::FS_LG)
-            .font(theme::font_semibold())
-            .color(color::TEXT),
-    ]
-    .spacing(theme::SP_MD)
-    .align_x(Alignment::Center);
-
-    if let Some((current, total)) = op.step {
-        card_content = card_content.push(
-            text(format!("Step {current}/{total}"))
-                .size(theme::FS_SM)
-                .font(theme::font_regular())
-                .color(color::TEXT_MUTED),
-        );
-    }
+    let card_content = progress_card_content(op, frame);
 
     let card: Element<'a, Message> = container(card_content)
         .width(Length::Fixed(OVERLAY_CARD_WIDTH))
@@ -65,4 +49,53 @@ pub fn progress_overlay<'a>(op: &'a ActiveOperation, frame: usize) -> Element<'a
         .into();
 
     stack![backdrop, card_center].into()
+}
+
+fn progress_card_content<'a>(op: &'a ActiveOperation, frame: usize) -> Element<'a, Message> {
+    let mut content = column![
+        moving_progress_bar(frame),
+        text(&op.label)
+            .size(theme::FS_LG)
+            .font(theme::font_semibold())
+            .width(Length::Fill)
+            .align_x(alignment::Horizontal::Center)
+            .wrapping(Wrapping::WordOrGlyph)
+            .color(color::TEXT),
+    ]
+    .width(Length::Fill)
+    .spacing(theme::SP_MD)
+    .align_x(Alignment::Center);
+
+    if let Some((current, total)) = op.step {
+        content = content.push(
+            text(format!("Step {current}/{total}"))
+                .size(theme::FS_SM)
+                .font(theme::font_regular())
+                .width(Length::Fill)
+                .align_x(alignment::Horizontal::Center)
+                .color(color::TEXT_MUTED),
+        );
+    }
+
+    content.into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn progress_card_content_fills_the_card_width() {
+        let operation = ActiveOperation {
+            id: 1,
+            kind: crate::state::OperationKind::ManualAction("layout_test"),
+            label: "Checking out a pull request into a long worktree path".to_string(),
+            started_at: std::time::Instant::now(),
+            step: Some((1, 3)),
+        };
+
+        let content: Element<'_, Message> = progress_card_content(&operation, 0);
+
+        assert_eq!(content.as_widget().size().width, Length::Fill);
+    }
 }
