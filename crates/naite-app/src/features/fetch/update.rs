@@ -19,7 +19,9 @@ impl App {
                 }
                 self.operation.auto_fetch_path = None;
                 if result.is_ok() {
-                    self.operation.last_fetch_completed = Some((path.clone(), Instant::now()));
+                    self.operation
+                        .last_fetch_completed
+                        .insert(path.clone(), Instant::now());
                 }
                 let completion = self.complete_auto_fetch(&result);
                 if self.release_prep.auto_running {
@@ -45,8 +47,9 @@ impl App {
                     Ok(()) => {
                         let status_message = self.fetch_success_message(scope);
                         if let Some(path) = self.repo.path.clone() {
-                            self.operation.last_fetch_completed =
-                                Some((path.clone(), Instant::now()));
+                            self.operation
+                                .last_fetch_completed
+                                .insert(path.clone(), Instant::now());
                             self.operation.pending_transient_status_after_reload =
                                 Some(status_message);
                             self.operation.loading = true;

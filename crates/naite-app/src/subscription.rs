@@ -68,11 +68,10 @@ impl App {
         // current repo path so the subscription only exists while the label
         // is actually being rendered for the open repo.
         let status_bar_idle_active = self
-            .operation
-            .last_fetch_completed
+            .repo
+            .path
             .as_ref()
-            .and_then(|(path, _)| self.repo.path.as_ref().map(|current| current == path))
-            .unwrap_or(false)
+            .is_some_and(|path| self.operation.last_fetch_completed.contains_key(path))
             && self.operation_tracker.active().is_empty();
         if status_bar_idle_active {
             subscriptions.push(time::every(STATUS_BAR_IDLE_TICK).map(|_| Message::StatusBarTick));

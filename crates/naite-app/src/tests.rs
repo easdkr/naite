@@ -5911,12 +5911,11 @@ fn manual_fetch_success_records_last_fetch_completed_for_current_repo() {
         result: Ok(()),
     }));
 
-    let (recorded_path, recorded_at) = app
+    let recorded_at = *app
         .operation
         .last_fetch_completed
-        .clone()
+        .get(&path)
         .expect("manual fetch success records last_fetch_completed");
-    assert_eq!(recorded_path, path);
     assert!(recorded_at >= before);
 }
 
@@ -5940,7 +5939,7 @@ fn manual_fetch_failure_leaves_last_fetch_completed_untouched() {
         result: Err("network unreachable".into()),
     }));
 
-    assert!(app.operation.last_fetch_completed.is_none());
+    assert!(app.operation.last_fetch_completed.is_empty());
 }
 
 #[test]
@@ -5969,19 +5968,56 @@ fn auto_fetch_success_records_last_fetch_completed_for_its_path() {
         result: Ok(()),
     }));
 
-    let (recorded_path, recorded_at) = app
+    let recorded_at = *app
         .operation
         .last_fetch_completed
-        .clone()
+        .get(&path)
         .expect("auto fetch success records last_fetch_completed");
-    assert_eq!(recorded_path, path);
     assert!(recorded_at >= before);
+}
+
+#[test]
+fn auto_fetch_success_preserves_last_fetch_times_for_other_repositories() {
+    let first_path = PathBuf::from("/tmp/naite-first");
+    let second_path = PathBuf::from("/tmp/naite-second");
+    let first_completed_at = Instant::now();
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(second_path.clone()),
+            sync_status: BranchSyncStatus {
+                upstream: Some("origin/main".into()),
+                ahead: 0,
+                behind: 0,
+            },
+            ..Default::default()
+        },
+        operation: OperationState {
+            auto_fetch_path: Some(second_path.clone()),
+            last_fetch_completed: HashMap::from([(first_path.clone(), first_completed_at)]),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let _ = app.update(Message::from(fetch::Message::AutoDone {
+        path: second_path.clone(),
+        result: Ok(()),
+    }));
+
+    assert_eq!(
+        app.operation.last_fetch_completed.get(&first_path),
+        Some(&first_completed_at)
+    );
+    assert!(app
+        .operation
+        .last_fetch_completed
+        .contains_key(&second_path));
 }
 
 #[test]
 fn auto_fetch_failure_leaves_last_fetch_completed_untouched() {
     let path = PathBuf::from("/tmp/naite");
-    let previous = (path.clone(), Instant::now());
+    let previous = Instant::now();
     let mut app = App {
         repo: RepositoryState {
             path: Some(path.clone()),
@@ -5994,7 +6030,7 @@ fn auto_fetch_failure_leaves_last_fetch_completed_untouched() {
         },
         operation: OperationState {
             auto_fetch_path: Some(path.clone()),
-            last_fetch_completed: Some(previous.clone()),
+            last_fetch_completed: HashMap::from([(path.clone(), previous)]),
             ..Default::default()
         },
         ..Default::default()
@@ -6005,7 +6041,10 @@ fn auto_fetch_failure_leaves_last_fetch_completed_untouched() {
         result: Err("network unreachable".into()),
     }));
 
-    assert_eq!(app.operation.last_fetch_completed, Some(previous));
+    assert_eq!(
+        app.operation.last_fetch_completed,
+        HashMap::from([(path, previous)])
+    );
 }
 
 #[test]

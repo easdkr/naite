@@ -202,17 +202,12 @@ impl App {
         .height(Length::Fill);
 
         let mut root = column![toolbar].width(Length::Fill).height(Length::Fill);
-        let last_fetch_completed =
-            self.operation
-                .last_fetch_completed
-                .as_ref()
-                .and_then(|(path, instant)| {
-                    if self.repo.path.as_ref() == Some(path) {
-                        Some(*instant)
-                    } else {
-                        None
-                    }
-                });
+        let last_fetch_completed = self
+            .repo
+            .path
+            .as_ref()
+            .and_then(|path| self.operation.last_fetch_completed.get(path))
+            .copied();
         root = root.push(widgets::top_status_bar(widgets::TopStatusBarProps {
             tracker: &self.operation_tracker,
             frame: self.status_animation_frame,
