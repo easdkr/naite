@@ -81,11 +81,7 @@ impl App {
                 Task::none()
             }
             worktree::Message::RemoveConfirmed => self.start_worktree_remove(),
-            worktree::Message::RemoveDone(result) => self.finish_worktree_mutation(
-                &OperationKind::ManualAction("worktree_remove"),
-                result,
-                "Removed worktree".into(),
-            ),
+            worktree::Message::RemoveDone(result) => self.finish_worktree_remove(result),
             worktree::Message::LockRequested(target) => self.start_worktree_lock(target),
             worktree::Message::LockDone(result) => self.finish_worktree_mutation(
                 &OperationKind::ManualAction("worktree_lock"),
@@ -235,6 +231,38 @@ impl App {
         ))
     }
 
+    fn finish_worktree_remove(&mut self, result: Result<(), String>) -> Task<Message> {
+        let kind = OperationKind::ManualAction("worktree_remove");
+        let needs_force_confirmation = result.as_ref().is_err_and(|message| {
+            worktree_remove_requires_force(message)
+                && self
+                    .selection
+                    .worktree_remove_confirmation
+                    .as_ref()
+                    .is_some_and(|prompt| !prompt.force)
+        });
+
+        if needs_force_confirmation {
+            self.operation.loading = false;
+            self.operation.error = None;
+            if let Some(prompt) = &mut self.selection.worktree_remove_confirmation {
+                prompt.force = true;
+            }
+            self.set_transient_status(
+                "Worktree has modified or untracked files. Confirm force removal to delete them."
+                    .into(),
+            );
+
+            return self
+                .operation_tracker
+                .current_id_for(&kind)
+                .map(|id| Task::done(Message::Operation(OperationEvent::Cancelled { id })))
+                .unwrap_or_else(Task::none);
+        }
+
+        self.finish_worktree_mutation(&kind, result, "Removed worktree".into())
+    }
+
     fn start_worktree_lock(&mut self, target: WorktreeSummary) -> Task<Message> {
         let Some(repo_path) = self.repo.path.clone() else {
             return Task::none();
@@ -345,6 +373,12 @@ fn default_worktree_path(repo_path: Option<&Path>) -> String {
         .unwrap_or_else(|| repo_path.with_file_name(format!("{name}-worktree")))
         .display()
         .to_string()
+}
+
+fn worktree_remove_requires_force(message: &str) -> bool {
+    message
+        .to_ascii_lowercase()
+        .contains("contains modified or untracked files")
 }
 
 fn worktree_label(summary: &WorktreeSummary) -> String {

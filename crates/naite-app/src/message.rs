@@ -153,6 +153,10 @@ pub enum OperationEvent {
         result: OpResult,
         severity: OpSeverity,
     },
+    /// The operation stopped before reaching a terminal result because it
+    /// needs another explicit user confirmation. Removes it from the active
+    /// tracker without recording history or surfacing a failure toast.
+    Cancelled { id: OperationId },
     /// User dismissed a completed (Recoverable-failed) operation from the
     /// bottom status bar. Carries the tracker's monotonic id so the
     /// matching history entry can be removed.

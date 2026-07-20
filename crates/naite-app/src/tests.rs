@@ -7807,6 +7807,29 @@ fn worktree_remove_request_blocks_current_or_locked_worktrees() {
 }
 
 #[test]
+fn worktree_remove_dirty_failure_requires_force_confirmation() {
+    let mut app = App::default();
+    let target = worktree_summary("/tmp/dirty-worktree", "feature/dirty");
+
+    let _ = app.update(Message::from(worktree::Message::RemoveRequested(target)));
+    app.operation.loading = true;
+
+    let _ = app.update(Message::from(worktree::Message::RemoveDone(Err(
+        "git command failed: git worktree remove /tmp/dirty-worktree: fatal: '/tmp/dirty-worktree' contains modified or untracked files, use --force to delete it"
+            .into(),
+    ))));
+
+    let prompt = app
+        .selection
+        .worktree_remove_confirmation
+        .as_ref()
+        .expect("dirty worktree removal must stay open for explicit force confirmation");
+    assert!(prompt.force);
+    assert!(!app.operation.loading);
+    assert!(app.operation.error.is_none());
+}
+
+#[test]
 fn terminal_idle_session_enables_start_command() {
     let mut app = App {
         repo: RepositoryState {
@@ -9578,6 +9601,21 @@ fn operation_tracker_complete_moves_op_into_history_and_empties_in_flight() {
     assert_eq!(history[0].label, "fetch origin");
     assert!(matches!(history[0].result, OpResult::Success));
     assert_eq!(history[0].severity, OpSeverity::Recoverable);
+}
+
+#[test]
+fn operation_tracker_cancel_removes_op_without_recording_history() {
+    let mut tracker = OperationTracker::default();
+    let kind = OperationKind::ManualAction("worktree_remove");
+    let id = tracker.start(kind.clone(), "Removing worktree…");
+
+    tracker
+        .cancel(id)
+        .expect("cancel must succeed for a known in-flight operation");
+
+    assert!(tracker.active().is_empty());
+    assert!(tracker.recent(usize::MAX).is_empty());
+    assert_eq!(tracker.current_id_for(&kind), None);
 }
 
 #[test]

@@ -802,24 +802,48 @@ pub fn worktree_remove_prompt<'a>(
     let toggle_delete_branch = Message::from(worktree::Message::RemoveDeleteBranchToggled(
         !prompt.delete_branch,
     ));
+    let (command_detail, action_label) = if prompt.force {
+        (
+            format!("Branch: {branch}. Runs git worktree remove --force."),
+            "Force remove",
+        )
+    } else {
+        (
+            format!("Branch: {branch}. Runs git worktree remove."),
+            "Remove",
+        )
+    };
+    let mut details = column![
+        text(format!("Remove worktree {}", prompt.target.path.display()))
+            .size(theme::FS_BASE)
+            .font(theme::font_semibold())
+            .width(Length::Fill)
+            .wrapping(Wrapping::WordOrGlyph)
+            .color(color::TEXT),
+        text(command_detail)
+            .size(theme::FS_SM)
+            .font(theme::font_regular())
+            .width(Length::Fill)
+            .wrapping(Wrapping::WordOrGlyph)
+            .color(color::TEXT_MUTED),
+    ]
+    .width(Length::Fill)
+    .spacing(2);
+    if prompt.force {
+        details = details.push(
+            text(
+                "Warning: modified and untracked files in this worktree will be permanently deleted. naite cannot undo this action.",
+            )
+            .size(theme::FS_SM)
+            .font(theme::font_semibold())
+            .width(Length::Fill)
+            .wrapping(Wrapping::WordOrGlyph)
+            .color(color::DANGER),
+        );
+    }
 
     column![
-        column![
-            text(format!("Remove worktree {}", prompt.target.path.display()))
-                .size(theme::FS_BASE)
-                .font(theme::font_semibold())
-                .width(Length::Fill)
-                .wrapping(Wrapping::WordOrGlyph)
-                .color(color::TEXT),
-            text(format!("Branch: {branch}. Runs git worktree remove."))
-                .size(theme::FS_SM)
-                .font(theme::font_regular())
-                .width(Length::Fill)
-                .wrapping(Wrapping::WordOrGlyph)
-                .color(color::TEXT_MUTED),
-        ]
-        .width(Length::Fill)
-        .spacing(2),
+        details,
         row![
             Space::with_width(Length::Fill),
             prompt_action_button(
@@ -833,7 +857,7 @@ pub fn worktree_remove_prompt<'a>(
                 Some(Message::from(worktree::Message::RemoveCancelled)),
             ),
             prompt_action_button(
-                "Remove",
+                action_label,
                 styles::danger_button,
                 (!loading).then_some(Message::from(worktree::Message::RemoveConfirmed)),
             ),

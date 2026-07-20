@@ -384,6 +384,10 @@ impl App {
                     let _ = self.operation_tracker.complete(id, result, severity);
                     Task::none()
                 }
+                crate::message::OperationEvent::Cancelled { id } => {
+                    let _ = self.operation_tracker.cancel(id);
+                    Task::none()
+                }
                 crate::message::OperationEvent::Dismissed { id } => {
                     // Errors from the tracker (stale ids, double-dismiss)
                     // are intentionally swallowed: the UI event is the

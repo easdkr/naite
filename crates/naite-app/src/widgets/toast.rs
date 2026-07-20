@@ -14,7 +14,7 @@
 
 use std::time::Instant;
 
-use iced::widget::{button, column, container, row, text, Space};
+use iced::widget::{button, column, container, row, text, text::Wrapping, Space};
 use iced::{Alignment, Element, Length};
 
 use crate::styles;
@@ -149,6 +149,8 @@ fn toast_pill(app_toast_index: usize, toast: &Toast) -> Element<'_, Message> {
     let label = text(toast.message.as_str())
         .size(theme::FS_SM)
         .font(theme::font_regular())
+        .width(Length::Fill)
+        .wrapping(Wrapping::WordOrGlyph)
         .color(color::TEXT);
 
     let row: iced::widget::Row<'_, Message> = match toast.severity {
@@ -157,9 +159,10 @@ fn toast_pill(app_toast_index: usize, toast: &Toast) -> Element<'_, Message> {
             Space::with_width(theme::SP_SM),
             dismiss_button(app_toast_index)
         ]
-        .align_y(Alignment::Center),
+        .align_y(Alignment::Center)
+        .width(Length::Fill),
         // Success pills auto-dismiss; no manual close button.
-        ToastSeverity::Success => row![label].align_y(Alignment::Center),
+        ToastSeverity::Success => row![label].align_y(Alignment::Center).width(Length::Fill),
     };
 
     let badge = text(badge_glyph(toast.severity))
@@ -167,11 +170,16 @@ fn toast_pill(app_toast_index: usize, toast: &Toast) -> Element<'_, Message> {
         .font(theme::font_semibold())
         .color(accent_color);
 
-    container(row![badge, Space::with_width(theme::SP_SM), row])
-        .padding(iced::Padding::from([6, 10]))
-        .max_width(360)
-        .style(style)
-        .into()
+    container(
+        row![badge, Space::with_width(theme::SP_SM), row]
+            .align_y(Alignment::Center)
+            .width(Length::Fill),
+    )
+    .width(Length::Fill)
+    .padding(iced::Padding::from([6, 10]))
+    .max_width(360)
+    .style(style)
+    .into()
 }
 
 fn dismiss_button(app_toast_index: usize) -> Element<'static, Message> {
@@ -224,6 +232,16 @@ mod tests {
         let toast = Toast::failure("oops");
         let far_future = toast.created_at + Duration::from_secs(60 * 60 * 24);
         assert!(!toast.is_expired(far_future));
+    }
+
+    #[test]
+    fn failure_toast_claims_its_bounded_width_for_wrapping() {
+        let toast = Toast::failure(
+            "git command failed: git worktree remove /tmp/a-very-long-worktree-path: fatal: the worktree contains modified or untracked files",
+        );
+        let pill = toast_pill(0, &toast);
+
+        assert_eq!(pill.as_widget().size().width, Length::Fill);
     }
 
     #[test]

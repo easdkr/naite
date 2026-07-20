@@ -338,6 +338,19 @@ impl OperationTracker {
         Ok(())
     }
 
+    pub fn cancel(&mut self, id: OperationId) -> Result<(), OperationTrackerError> {
+        let pos = self
+            .in_flight
+            .iter()
+            .position(|op| op.id == id)
+            .ok_or(OperationTrackerError::UnknownOperation(id))?;
+        let op = self.in_flight.remove(pos);
+        if self.current.get(&op.kind) == Some(&id) {
+            self.current.remove(&op.kind);
+        }
+        Ok(())
+    }
+
     /// Look up the in-flight id for a given `OperationKind`, if any. Used by
     /// feature update handlers that receive completion events (e.g. async
     /// task results) without having the id in hand.
