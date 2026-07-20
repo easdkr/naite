@@ -7,7 +7,7 @@
 
 use iced::widget::text::Wrapping;
 use iced::widget::{container, mouse_area, scrollable, stack, text, Space};
-use iced::{Background, Border, Element, Length, Padding};
+use iced::{Background, Border, Element, Length, Padding, Theme};
 
 use crate::styles;
 use crate::theme::{self, color, MAX_MODAL_HEIGHT};
@@ -49,13 +49,16 @@ pub(super) fn modal_action_label<'a>(label: &'a str) -> Element<'a, Message> {
         .into()
 }
 
-fn modal_with_progress<'a>(
-    content: Element<'a, Message>,
+fn modal_with_progress<'a, Renderer>(
+    content: Element<'a, Message, Theme, Renderer>,
     on_dismiss: Message,
     progress: f32,
     max_width: f32,
-) -> Element<'a, Message> {
-    let backdrop: Element<'a, Message> = mouse_area(
+) -> Element<'a, Message, Theme, Renderer>
+where
+    Renderer: iced_core::Renderer + 'a,
+{
+    let backdrop: Element<'a, Message, Theme, Renderer> = mouse_area(
         container(Space::new(Length::Fill, Length::Fill))
             .width(Length::Fill)
             .height(Length::Fill)
@@ -64,22 +67,26 @@ fn modal_with_progress<'a>(
     .on_press(on_dismiss)
     .into();
 
-    let card_surface: Element<'a, Message> = mouse_area(
-        scrollable(
-            container(content)
-                .width(Length::Fill)
-                .max_width(max_width)
-                .max_height(MAX_MODAL_HEIGHT)
-                .padding(Padding::from(theme::SP_LG))
-                .style(move |_| card_progress_style(progress)),
+    let card_surface: Element<'a, Message, Theme, Renderer> = container(
+        mouse_area(
+            scrollable(
+                container(content)
+                    .width(Length::Fill)
+                    .max_width(max_width)
+                    .max_height(MAX_MODAL_HEIGHT)
+                    .padding(Padding::from(theme::SP_LG))
+                    .style(move |_| card_progress_style(progress)),
+            )
+            .direction(styles::thin_scrollbar_dir())
+            .style(styles::thin_scrollbar),
         )
-        .direction(styles::thin_scrollbar_dir())
-        .style(styles::thin_scrollbar),
+        .on_press(Message::NoOp),
     )
-    .on_press(Message::NoOp)
+    .width(Length::Fill)
+    .max_width(max_width)
     .into();
 
-    let card: Element<'a, Message> = container(card_surface)
+    let card: Element<'a, Message, Theme, Renderer> = container(card_surface)
         .width(Length::Fill)
         .height(Length::Fill)
         .center_x(Length::Fill)
@@ -117,4 +124,36 @@ fn card_progress_style(progress: f32) -> container::Style {
 
 fn ease_out_cubic(progress: f32) -> f32 {
     1.0 - (1.0 - progress).powi(3)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use iced_core::{layout, widget::Tree, Size};
+
+    #[test]
+    fn modal_card_is_centered_within_window_bounds() {
+        let content: Element<'_, Message, Theme, ()> =
+            Space::new(Length::Fill, Length::Fixed(100.0)).into();
+        let modal = modal_with_progress(content, Message::NoOp, 1.0, MODAL_MAX_WIDTH);
+        let mut tree = Tree::new(modal.as_widget());
+        let limits = layout::Limits::new(Size::ZERO, Size::new(1_200.0, 800.0));
+        let node = modal.as_widget().layout(&mut tree, &(), &limits);
+
+        let card_layer = layout::Layout::new(&node)
+            .children()
+            .nth(1)
+            .expect("modal stack contains the card layer");
+        let scrollable = card_layer
+            .children()
+            .next()
+            .expect("card layer contains the scrollable surface");
+        let card_surface = scrollable
+            .children()
+            .next()
+            .expect("scrollable contains the styled card surface");
+
+        assert_eq!(card_surface.bounds().width, MODAL_MAX_WIDTH);
+        assert_eq!(card_surface.bounds().x, (1_200.0 - MODAL_MAX_WIDTH) / 2.0);
+    }
 }

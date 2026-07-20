@@ -187,8 +187,8 @@ pub enum OperationKind {
 }
 
 impl OperationKind {
-    pub fn shows_overlay_immediately(&self) -> bool {
-        matches!(self, Self::ReleasePrep)
+    fn uses_generic_progress_overlay(&self) -> bool {
+        matches!(self, Self::RepositoryLoad | Self::ManualAction(_))
     }
 }
 
@@ -346,15 +346,17 @@ impl OperationTracker {
     }
 
     /// Returns the id of the in-flight operation whose central-progress
-    /// overlay should currently be rendered, if any. Operations whose
-    /// `OperationKind::shows_overlay_immediately()` returns true surface
-    /// without delay; all others wait `threshold_secs` of elapsed time
-    /// so a fast fetch (sub-second) doesn't flash the card.
+    /// overlay should currently be rendered, if any. Background auto-fetches
+    /// stay in the status bar, while release preparation uses its dedicated
+    /// progress modal. Foreground operations wait `threshold_secs` so fast
+    /// operations do not flash the generic card.
     pub fn should_show_overlay(&self, threshold_secs: u64) -> Option<OperationId> {
         let threshold = Duration::from_secs(threshold_secs);
         self.in_flight
             .iter()
-            .find(|op| op.started_at.elapsed() >= threshold || op.kind.shows_overlay_immediately())
+            .find(|op| {
+                op.kind.uses_generic_progress_overlay() && op.started_at.elapsed() >= threshold
+            })
             .map(|op| op.id)
     }
 

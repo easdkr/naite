@@ -95,10 +95,11 @@ pub struct App {
     pub(crate) status_animation_frame: usize,
     /// `OperationId` currently driving the central progress overlay, if
     /// any. Recomputed on every `Message::TransientStatusTick` via
-    /// `OperationTracker::should_show_overlay(OVERLAY_TRIGGER_SECS)` —
-    /// ReleasePrep shows immediately, everything else waits 2s. View
-    /// looks the op up by id in `operation_tracker.active()` so a stale
-    /// id never survives a completion between tick and render.
+    /// `OperationTracker::should_show_overlay(OVERLAY_TRIGGER_SECS)`.
+    /// AutoFetch stays in the status bar, ReleasePrep uses its dedicated
+    /// progress modal, and foreground operations wait 2s. View looks the op
+    /// up by id in `operation_tracker.active()` so a stale id never survives
+    /// a completion between tick and render.
     pub(crate) overlay_visible: Option<OperationId>,
 }
 

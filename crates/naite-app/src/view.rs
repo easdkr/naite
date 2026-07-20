@@ -461,8 +461,9 @@ impl App {
         // sit above modals/context menus so users always see completion
         // feedback regardless of what modal is open. Overlay visibility
         // is computed in update.rs on every TransientStatusTick
-        // (ReleasePrep shows immediately, everything else waits
-        // OVERLAY_TRIGGER_SECS). The id is looked up by
+        // (AutoFetch stays in the status bar, ReleasePrep uses its dedicated
+        // modal, and foreground operations wait OVERLAY_TRIGGER_SECS). The id
+        // is looked up by
         // active().iter().find() so a stale id (op completed between
         // tick and render) silently resolves to None rather than
         // dereferencing a freed reference.

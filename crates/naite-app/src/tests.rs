@@ -9496,6 +9496,28 @@ mod release_prep_step_chain {
 // --- Task 5: OperationTracker state model ---
 
 #[test]
+fn release_prep_uses_its_dedicated_modal_instead_of_generic_progress_overlay() {
+    let mut tracker = OperationTracker::default();
+    tracker.start(OperationKind::ReleasePrep, "Checking out source branch");
+
+    assert!(
+        tracker.should_show_overlay(0).is_none(),
+        "release preparation already renders progress in its dedicated modal"
+    );
+}
+
+#[test]
+fn auto_fetch_does_not_use_generic_progress_overlay() {
+    let mut tracker = OperationTracker::default();
+    tracker.start(OperationKind::AutoFetch, "Fetching (auto)...");
+
+    assert!(
+        tracker.should_show_overlay(0).is_none(),
+        "background auto-fetch progress belongs in the status bar"
+    );
+}
+
+#[test]
 fn repository_load_completion_targets_the_active_reload_operation() {
     let mut tracker = OperationTracker::default();
     let reload_id = tracker.start(OperationKind::RepositoryLoad, "Reloading repository…");

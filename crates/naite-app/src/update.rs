@@ -336,9 +336,9 @@ impl App {
                     self.toasts.retain(|toast| !toast.is_expired(now));
                 }
                 // Reuse the same tick for overlay visibility bookkeeping.
-                // ReleasePrep ops surface immediately; everything else
-                // waits for OVERLAY_TRIGGER_SECS of elapsed time so fast
-                // ops never flash the overlay card.
+                // AutoFetch stays in the status bar and ReleasePrep uses its
+                // dedicated progress modal. Foreground operations wait for
+                // OVERLAY_TRIGGER_SECS so fast operations never flash the card.
                 self.overlay_visible = self
                     .operation_tracker
                     .should_show_overlay(OVERLAY_TRIGGER_SECS);

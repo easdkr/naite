@@ -7,8 +7,8 @@
 //! events so the user can keep interacting with the underlying UI
 //! while they wait. v1 deliberately omits a cancel button — the plan
 //! excludes cancel support, and Task 20 owns the trigger condition
-//! that shows this overlay. release_prep's full per-step glyph list
-//! is added by Task 21.
+//! that shows this overlay. Background auto-fetch stays in the status bar,
+//! while release preparation uses its own modal with a full per-step list.
 
 use iced::widget::text::Wrapping;
 use iced::widget::{column, container, stack, text, Space};
