@@ -159,6 +159,10 @@ pub struct OperationState {
     pub fatal_error: Option<String>,
     pub loading: bool,
     pub auto_fetch_path: Option<PathBuf>,
+    /// Operation id for the currently running background auto-fetch. The id
+    /// travels with the async completion so a late result cannot complete a
+    /// newer auto-fetch operation.
+    pub auto_fetch_operation_id: Option<OperationId>,
     pub auto_fetch_last_started: Option<(PathBuf, Instant)>,
     /// Per-repository recording of successful fetch completions. The top
     /// status bar renders "Fetched {n min ago}" from the entry whose path

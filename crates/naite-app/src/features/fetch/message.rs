@@ -8,6 +8,7 @@ pub enum Message {
         result: Result<(), String>,
     },
     AutoDone {
+        id: crate::state::OperationId,
         path: PathBuf,
         result: Result<(), String>,
     },

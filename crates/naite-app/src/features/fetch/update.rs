@@ -4,7 +4,7 @@ use iced::Task;
 
 use crate::features::fetch::{self, FetchScope, Message as FetchMessage};
 use crate::message::OperationEvent;
-use crate::state::{OpResult, OpSeverity, OperationKind, ReleasePrepPhase};
+use crate::state::{OpResult, OpSeverity, OperationId, OperationKind, ReleasePrepPhase};
 use crate::{features::repo_open, App, Message};
 
 const AUTO_FETCH_MIN_INTERVAL: Duration = Duration::from_secs(60);
@@ -13,17 +13,23 @@ impl App {
     pub(crate) fn update_fetch(&mut self, message: FetchMessage) -> Task<Message> {
         match message {
             FetchMessage::Requested(scope) => self.start_fetch(scope),
-            FetchMessage::AutoDone { path, result } => {
-                if self.operation.auto_fetch_path.as_ref() != Some(&path) {
-                    return Task::none();
+            FetchMessage::AutoDone { id, path, result } => {
+                let is_current = self.operation.auto_fetch_operation_id == Some(id)
+                    || (self.operation.auto_fetch_operation_id.is_none()
+                        && self.operation.auto_fetch_path.as_ref() == Some(&path));
+                if is_current {
+                    self.operation.auto_fetch_path = None;
+                    self.operation.auto_fetch_operation_id = None;
                 }
-                self.operation.auto_fetch_path = None;
                 if result.is_ok() {
                     self.operation
                         .last_fetch_completed
                         .insert(path.clone(), Instant::now());
                 }
-                let completion = self.complete_auto_fetch(&result);
+                let completion = self.complete_auto_fetch(id, &result);
+                if !is_current {
+                    return completion;
+                }
                 if self.release_prep.auto_running {
                     return completion.chain(self.continue_release_prep_auto());
                 }
@@ -122,10 +128,12 @@ impl App {
         }
 
         let path_for_message = path.clone();
+        let id = self.operation_tracker.next_id();
         self.operation.auto_fetch_path = Some(path_for_message.clone());
+        self.operation.auto_fetch_operation_id = Some(id);
         self.operation.auto_fetch_last_started = Some((path_for_message.clone(), Instant::now()));
         let start = Task::done(Message::Operation(OperationEvent::Started {
-            id: self.operation_tracker.next_id(),
+            id,
             kind: OperationKind::AutoFetch,
             label: "Fetching (auto)...".to_string(),
         }));
@@ -133,6 +141,7 @@ impl App {
             fetch::task::run(path, FetchScope::CurrentRemote),
             move |result| {
                 Message::from(FetchMessage::AutoDone {
+                    id,
                     path: path_for_message.clone(),
                     result,
                 })
@@ -140,13 +149,11 @@ impl App {
         ))
     }
 
-    fn complete_auto_fetch(&mut self, result: &Result<(), String>) -> Task<Message> {
-        let Some(id) = self
-            .operation_tracker
-            .current_id_for(&OperationKind::AutoFetch)
-        else {
-            return Task::none();
-        };
+    fn complete_auto_fetch(
+        &mut self,
+        id: OperationId,
+        result: &Result<(), String>,
+    ) -> Task<Message> {
         let event = match result {
             Ok(()) => OperationEvent::Completed {
                 id,

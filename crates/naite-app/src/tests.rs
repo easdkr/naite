@@ -5716,6 +5716,7 @@ fn auto_fetch_done_refreshes_active_repo_without_status_noise() {
     };
 
     let _ = app.update(Message::from(fetch::Message::AutoDone {
+        id: 1,
         path: path.clone(),
         result: Ok(()),
     }));
@@ -5749,6 +5750,7 @@ fn auto_fetch_done_skips_refresh_during_foreground_operation() {
     };
 
     let _ = app.update(Message::from(fetch::Message::AutoDone {
+        id: 1,
         path: path.clone(),
         result: Ok(()),
     }));
@@ -5781,6 +5783,7 @@ fn auto_fetch_done_retargets_after_repo_switch() {
     };
 
     let _ = app.update(Message::from(fetch::Message::AutoDone {
+        id: 1,
         path: fetched_path.clone(),
         result: Ok(()),
     }));
@@ -5791,6 +5794,49 @@ fn auto_fetch_done_retargets_after_repo_switch() {
     );
     assert!(!app.tabs.refreshing.contains(&fetched_path));
     assert!(app.operation.error.is_none());
+}
+
+#[test]
+fn stale_auto_fetch_done_preserves_current_fetch_state_and_records_completion() {
+    let stale_path = PathBuf::from("/tmp/naite-stale");
+    let current_path = PathBuf::from("/tmp/naite-current");
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(current_path.clone()),
+            sync_status: BranchSyncStatus {
+                upstream: Some("origin/main".into()),
+                ahead: 0,
+                behind: 0,
+            },
+            ..Default::default()
+        },
+        operation: OperationState {
+            auto_fetch_path: Some(current_path.clone()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let stale_id = app
+        .operation_tracker
+        .start(OperationKind::AutoFetch, "stale fetch");
+    let current_id = app
+        .operation_tracker
+        .start(OperationKind::AutoFetch, "current fetch");
+    app.operation.auto_fetch_operation_id = Some(current_id);
+
+    let _ = app.update(Message::from(fetch::Message::AutoDone {
+        id: stale_id,
+        path: stale_path.clone(),
+        result: Ok(()),
+    }));
+
+    assert_eq!(
+        app.operation.auto_fetch_path.as_deref(),
+        Some(current_path.as_path())
+    );
+    assert_eq!(app.operation.auto_fetch_operation_id, Some(current_id));
+    assert!(app.operation.last_fetch_completed.contains_key(&stale_path));
 }
 
 #[test]
@@ -5826,6 +5872,7 @@ fn auto_fetch_done_failure_resumes_pending_release_prep_auto() {
     };
 
     let _ = app.update(Message::from(fetch::Message::AutoDone {
+        id: 1,
         path: path.clone(),
         result: Err("network unreachable".into()),
     }));
@@ -5874,6 +5921,7 @@ fn auto_fetch_done_success_resumes_pending_release_prep_auto() {
     };
 
     let _ = app.update(Message::from(fetch::Message::AutoDone {
+        id: 1,
         path: path.clone(),
         result: Ok(()),
     }));
@@ -5964,6 +6012,7 @@ fn auto_fetch_success_records_last_fetch_completed_for_its_path() {
 
     let before = Instant::now();
     let _ = app.update(Message::from(fetch::Message::AutoDone {
+        id: 1,
         path: path.clone(),
         result: Ok(()),
     }));
@@ -6000,6 +6049,7 @@ fn auto_fetch_success_preserves_last_fetch_times_for_other_repositories() {
     };
 
     let _ = app.update(Message::from(fetch::Message::AutoDone {
+        id: 1,
         path: second_path.clone(),
         result: Ok(()),
     }));
@@ -6037,6 +6087,7 @@ fn auto_fetch_failure_leaves_last_fetch_completed_untouched() {
     };
 
     let _ = app.update(Message::from(fetch::Message::AutoDone {
+        id: 1,
         path: path.clone(),
         result: Err("network unreachable".into()),
     }));
