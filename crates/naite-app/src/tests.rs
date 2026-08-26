@@ -2144,6 +2144,7 @@ fn commit_history_tag_and_file_inspection_commands_open_phase2_surfaces() {
         repo: RepositoryState {
             path: Some(PathBuf::from("/tmp/naite")),
             commits: vec![commit("a111111", "add app shell", "june")],
+            local_utc_offset_minutes: Some(540),
             ..Default::default()
         },
         selection: SelectionState {
@@ -2193,7 +2194,7 @@ fn tag_create_defaults_to_timestamp_name() {
         ..Default::default()
     };
 
-    let _ = app.open_tag_create_form(None);
+    let _ = app.open_tag_create_form_with_options(None, false);
 
     assert!(app.tag_create.open);
     assert_eq!(app.tag_create.name_mode, TagNameMode::Timestamp);
@@ -2236,6 +2237,7 @@ fn tag_deployment_command_opens_push_enabled_tag_modal() {
         repo: RepositoryState {
             path: Some(PathBuf::from("/tmp/naite")),
             commits: vec![commit("a111111", "prepare release tag", "june")],
+            local_utc_offset_minutes: Some(540),
             ..Default::default()
         },
         selection: SelectionState {
@@ -2255,6 +2257,23 @@ fn tag_deployment_command_opens_push_enabled_tag_modal() {
     assert!(!app.command_palette.open);
     assert!(app.tag_create.open);
     assert!(app.tag_create.push_after_create);
+    let (date, time) = app
+        .tag_create
+        .name
+        .strip_prefix('v')
+        .and_then(|name| name.split_once('-'))
+        .expect("timestamp tag should use vYYYY.MM.DD-HHMM");
+    let mut date_parts = date.split('.');
+    for expected_len in [4, 2, 2] {
+        let part = date_parts
+            .next()
+            .expect("timestamp date should have year, month, and day");
+        assert_eq!(part.len(), expected_len);
+        assert!(part.bytes().all(|byte| byte.is_ascii_digit()));
+    }
+    assert_eq!(date_parts.next(), None);
+    assert_eq!(time.len(), 4);
+    assert!(time.bytes().all(|byte| byte.is_ascii_digit()));
     assert_eq!(
         app.tag_create
             .target_commit
@@ -2265,11 +2284,44 @@ fn tag_deployment_command_opens_push_enabled_tag_modal() {
 }
 
 #[test]
+fn tag_deployment_waits_for_local_offset_before_opening_modal() {
+    let repo_path = PathBuf::from("/tmp/naite");
+    let target = commit("a111111", "prepare release tag", "june");
+    let mut app = App {
+        repo: RepositoryState {
+            path: Some(repo_path.clone()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let _ = app.update_tag(tag_feature::Message::CreateAndPushRequested(Some(
+        target.clone(),
+    )));
+
+    assert!(app.tag_create.loading_local_time);
+    assert!(!app.tag_create.open);
+
+    let _ = app.update_tag(tag_feature::Message::LocalUtcOffsetLoaded {
+        repo_path,
+        target_commit: Some(target),
+        push_after_create: true,
+        result: Ok(540),
+    });
+
+    assert_eq!(app.repo.local_utc_offset_minutes, Some(540));
+    assert!(!app.tag_create.loading_local_time);
+    assert!(app.tag_create.open);
+    assert!(app.tag_create.push_after_create);
+}
+
+#[test]
 fn tag_create_from_context_menu_closes_context_menu() {
     let commit = commit("a111111", "add tag modal", "june");
     let mut app = App {
         repo: RepositoryState {
             path: Some(PathBuf::from("/tmp/naite")),
+            local_utc_offset_minutes: Some(540),
             ..Default::default()
         },
         selection: SelectionState {
@@ -2331,7 +2383,7 @@ fn tag_create_semver_mode_suggests_next_patch_or_initial_version() {
         ..Default::default()
     };
 
-    let _ = app.open_tag_create_form(None);
+    let _ = app.open_tag_create_form_with_options(None, false);
     let _ = app.update_tag(tag_feature::Message::CreateNameModeChanged(
         TagNameMode::SemVerNext,
     ));
@@ -2361,7 +2413,7 @@ fn tag_create_branch_slug_mode_uses_collision_free_branch_name() {
         ..Default::default()
     };
 
-    let _ = app.open_tag_create_form(None);
+    let _ = app.open_tag_create_form_with_options(None, false);
     let _ = app.update_tag(tag_feature::Message::CreateNameModeChanged(
         TagNameMode::BranchSlug,
     ));

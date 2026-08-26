@@ -13,9 +13,33 @@ use crate::{App, Message, TagDeletePrompt};
 impl App {
     pub(crate) fn update_tag(&mut self, message: TagMessage) -> Task<Message> {
         match message {
-            TagMessage::CreateRequested(target_commit) => self.open_tag_create_form(target_commit),
+            TagMessage::CreateRequested(target_commit) => {
+                self.request_tag_create_form(target_commit, false)
+            }
             TagMessage::CreateAndPushRequested(target_commit) => {
-                self.open_tag_create_form_with_options(target_commit, true)
+                self.request_tag_create_form(target_commit, true)
+            }
+            TagMessage::LocalUtcOffsetLoaded {
+                repo_path,
+                target_commit,
+                push_after_create,
+                result,
+            } => {
+                if self.repo.path.as_ref() != Some(&repo_path) {
+                    return Task::none();
+                }
+                self.tag_create.loading_local_time = false;
+                match result {
+                    Ok(offset_minutes) => {
+                        self.repo.local_utc_offset_minutes = Some(offset_minutes);
+                        self.open_tag_create_form_with_options(target_commit, push_after_create)
+                    }
+                    Err(message) => {
+                        self.operation.error =
+                            Some(format!("Could not resolve local time: {message}"));
+                        Task::none()
+                    }
+                }
             }
             TagMessage::CreateNameChanged(name) => {
                 self.tag_create.name = name;
@@ -106,11 +130,32 @@ impl App {
         }
     }
 
-    pub(crate) fn open_tag_create_form(
+    fn request_tag_create_form(
         &mut self,
         target_commit: Option<CommitSummary>,
+        push_after_create: bool,
     ) -> Task<Message> {
-        self.open_tag_create_form_with_options(target_commit, false)
+        if self.repo.path.is_none() || self.operation.loading || self.tag_create.loading_local_time
+        {
+            return Task::none();
+        }
+        if self.repo.local_utc_offset_minutes.is_some() {
+            return self.open_tag_create_form_with_options(target_commit, push_after_create);
+        }
+
+        let Some(repo_path) = self.repo.path.clone() else {
+            return Task::none();
+        };
+        let message_repo_path = repo_path.clone();
+        self.tag_create.loading_local_time = true;
+        Task::perform(tag::task::load_local_utc_offset(repo_path), move |result| {
+            Message::from(TagMessage::LocalUtcOffsetLoaded {
+                repo_path: message_repo_path.clone(),
+                target_commit: target_commit.clone(),
+                push_after_create,
+                result,
+            })
+        })
     }
 
     pub(crate) fn open_tag_create_form_with_options(
@@ -129,6 +174,7 @@ impl App {
             name: self.suggest_unique_tag_name(name_mode),
             name_mode,
             push_after_create,
+            loading_local_time: false,
         };
         text_input::focus(self.tag_create_input_id.clone())
     }
@@ -185,15 +231,16 @@ impl App {
     }
 
     pub(crate) fn suggest_unique_tag_name(&self, mode: TagNameMode) -> String {
+        let utc_offset_minutes = self.repo.local_utc_offset_minutes.unwrap_or_default();
         let base = match mode {
-            TagNameMode::Timestamp => timestamp_tag_name(),
+            TagNameMode::Timestamp => timestamp_tag_name(utc_offset_minutes),
             TagNameMode::SemVerNext => self.next_semver_tag_name(),
             TagNameMode::BranchSlug => self
                 .repo
                 .head_branch
                 .as_deref()
                 .and_then(branch_slug_tag_name)
-                .unwrap_or_else(timestamp_tag_name),
+                .unwrap_or_else(|| timestamp_tag_name(utc_offset_minutes)),
         };
         self.first_available_tag_name(&base)
     }
@@ -230,17 +277,22 @@ impl App {
     }
 }
 
-fn timestamp_tag_name() -> String {
+fn timestamp_tag_name(utc_offset_minutes: i32) -> String {
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
-        .as_secs();
-    let (year, month, day) = unix_secs_to_utc_date(secs);
-    format!("v{year}.{month}.{day}")
+        .as_secs()
+        .min(i64::MAX as u64) as i64;
+    timestamp_tag_name_at(secs, utc_offset_minutes)
 }
 
-fn unix_secs_to_utc_date(secs: u64) -> (i32, u32, u32) {
-    civil_from_days((secs / 86_400) as i64)
+fn timestamp_tag_name_at(secs: i64, utc_offset_minutes: i32) -> String {
+    let local_seconds = secs.saturating_add(i64::from(utc_offset_minutes).saturating_mul(60));
+    let (year, month, day) = civil_from_days(local_seconds.div_euclid(86_400));
+    let seconds_within_day = local_seconds.rem_euclid(86_400);
+    let hour = seconds_within_day / 3_600;
+    let minute = (seconds_within_day % 3_600) / 60;
+    format!("v{year:04}.{month:02}.{day:02}-{hour:02}{minute:02}")
 }
 
 fn civil_from_days(days_since_unix_epoch: i64) -> (i32, u32, u32) {
@@ -299,7 +351,7 @@ fn branch_slug_tag_name(branch: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{branch_slug_tag_name, parse_v_semver, unix_secs_to_utc_date};
+    use super::{branch_slug_tag_name, parse_v_semver, timestamp_tag_name_at};
 
     #[test]
     fn parse_v_semver_accepts_exact_v_major_minor_patch() {
@@ -320,8 +372,8 @@ mod tests {
     }
 
     #[test]
-    fn unix_secs_to_utc_date_converts_calendar_dates() {
-        assert_eq!(unix_secs_to_utc_date(0), (1970, 1, 1));
-        assert_eq!(unix_secs_to_utc_date(1_779_148_800), (2026, 5, 19));
+    fn timestamp_tag_name_applies_local_offset_and_omits_seconds() {
+        assert_eq!(timestamp_tag_name_at(0, 540), "v1970.01.01-0900");
+        assert_eq!(timestamp_tag_name_at(0, -120), "v1969.12.31-2200");
     }
 }

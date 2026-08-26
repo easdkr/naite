@@ -41,6 +41,7 @@ pub struct RepositoryState {
     pub operation_state: GitOperationState,
     pub graph_layout: GraphLayout,
     pub status_detail: WorktreeStatusDetail,
+    pub local_utc_offset_minutes: Option<i32>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -480,6 +481,7 @@ pub struct TagCreateState {
     pub name: String,
     pub name_mode: TagNameMode,
     pub push_after_create: bool,
+    pub loading_local_time: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
