@@ -189,6 +189,22 @@ scripts/macos-bundle.sh --release     # build target/release/naite.app
 open target/debug/naite.app           # run with the project icon on macOS
 ```
 
+AX 앱 마켓에 수동 업로드할 ad-hoc signed zip을 만들려면 Node 24+ 환경에서
+다음 package script를 사용합니다.
+
+```bash
+npm run build:ax-market
+```
+
+출력된 zip 파일 경로, SHA-256, 파일 크기를 AX 앱 마켓 업로드 화면에 직접
+입력합니다.
+
+버전을 직접 지정하려면:
+
+```bash
+npm run build:ax-market -- --version 0.1.0+adhoc.20260826
+```
+
 ## macOS 설치
 
 설치 스크립트는 release build를 만들고 unsigned `naite.app` bundle을

@@ -1,0 +1,8 @@
+{
+  "name": "naite",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:ax-market": "node scripts/ax-market-package.mjs"
+  }
+}
