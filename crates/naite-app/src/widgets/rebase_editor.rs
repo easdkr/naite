@@ -27,6 +27,7 @@ use super::ROW_HEIGHT;
 const MOVE_BUTTON_SIZE: f32 = 22.0;
 const ACTION_COLUMN_WIDTH: f32 = 84.0;
 const SHA_COLUMN_WIDTH: f32 = 68.0;
+const PROMOTION_EMAIL_COLUMN_WIDTH: f32 = 132.0;
 const INSERTION_LINE_HEIGHT: f32 = 2.0;
 const GHOST_HORIZONTAL_INSET: f32 = 8.0;
 const REBASE_TOOLBAR_HEIGHT: f32 = 56.0;
@@ -50,7 +51,11 @@ pub fn rebase_editor<'a>(
     let active_gap = active_insertion_gap(session);
     let actions: Vec<RebaseAction> = session.plan.iter().map(|row| row.action).collect();
     let gutter_rows = build_rebase_gutter(&actions);
-    let mut body = column![toolbar(session, release_promotion_active), header()].spacing(0);
+    let mut body = column![
+        toolbar(session, release_promotion_active),
+        header(release_promotion_active)
+    ]
+    .spacing(0);
     body = body.push(insertion_gap(active_gap == Some(0)));
     for (index, row) in session.plan.iter().enumerate() {
         let gutter = gutter_rows.get(index).cloned().unwrap_or_else(|| GraphRow {
@@ -68,6 +73,7 @@ pub fn rebase_editor<'a>(
             gutter,
             inherits_reword,
             avatars,
+            release_promotion_active,
         ));
         body = body.push(insertion_gap(active_gap == Some(index + 1)));
     }
@@ -87,7 +93,11 @@ pub fn rebase_editor<'a>(
     .into();
 
     match session.drag.as_ref().filter(|drag| drag.started) {
-        Some(drag) => stack![panel, ghost_overlay(session, drag, cursor)].into(),
+        Some(drag) => stack![
+            panel,
+            ghost_overlay(session, drag, cursor, release_promotion_active)
+        ]
+        .into(),
         None => panel,
     }
 }
@@ -124,12 +134,13 @@ fn ghost_overlay<'a>(
     session: &'a InteractiveRebaseSession,
     drag: &DragState,
     cursor: Option<Point>,
+    show_author_email: bool,
 ) -> Element<'a, Message> {
     let Some(row_data) = session.plan.get(drag.source_index) else {
         return Space::new(Length::Fill, Length::Fill).into();
     };
     let leading_space = ghost_top_y(session, drag, cursor).max(0.0);
-    let ghost = container(ghost_row(row_data))
+    let ghost = container(ghost_row(row_data, show_author_email))
         .padding(Padding::from([0, GHOST_HORIZONTAL_INSET as u16]))
         .width(Length::Fill);
     column![Space::with_height(Length::Fixed(leading_space)), ghost]
@@ -159,7 +170,8 @@ fn approx_header_height() -> f32 {
     theme::FS_XS as f32 + 16.0
 }
 
-fn ghost_row<'a>(row_data: &'a RebasePlanRow) -> Element<'a, Message> {
+fn ghost_row<'a>(row_data: &'a RebasePlanRow, show_author_email: bool) -> Element<'a, Message> {
+    let dropped = row_data.action == RebaseAction::Drop;
     let sha = text(short_id(&row_data.commit.id))
         .size(theme::FS_SM)
         .font(iced::Font::MONOSPACE)
@@ -169,6 +181,14 @@ fn ghost_row<'a>(row_data: &'a RebasePlanRow) -> Element<'a, Message> {
         .size(theme::FS_SM)
         .font(theme::font_semibold())
         .color(color::with_alpha(color::TEXT, 0.95));
+    let summary: Element<'a, Message> = if show_author_email {
+        container(summary.wrapping(Wrapping::None))
+            .height(Length::Fixed(theme::FS_SM as f32 * 1.3))
+            .clip(true)
+            .into()
+    } else {
+        summary.into()
+    };
 
     let action = container(
         text(action_label(row_data.action))
@@ -179,7 +199,7 @@ fn ghost_row<'a>(row_data: &'a RebasePlanRow) -> Element<'a, Message> {
     .padding(Padding::from([3, 8]))
     .style(styles::ghost_action_chip);
 
-    let content = row![
+    let mut content = row![
         Space::with_width(Length::Fixed(2.0)),
         container(action).width(Length::Fixed(ACTION_COLUMN_WIDTH)),
         Space::with_width(Length::Fixed(theme::SP_MD as f32)),
@@ -189,6 +209,12 @@ fn ghost_row<'a>(row_data: &'a RebasePlanRow) -> Element<'a, Message> {
     ]
     .spacing(theme::SP_SM)
     .align_y(Alignment::Center);
+    if show_author_email {
+        content = content.push(promotion_author_email(
+            &row_data.commit.author_email,
+            dropped,
+        ));
+    }
 
     container(content)
         .height(Length::Fixed(ROW_HEIGHT))
@@ -565,42 +591,107 @@ fn rebase_toolbar_button<'a>(
         .into()
 }
 
-fn header<'a>() -> Element<'a, Message> {
+fn header<'a>(show_author_email: bool) -> Element<'a, Message> {
     // Pre-gutter this spacer was 92.0 (matching plan_row's leading columns
     // plus a small fudge for container-padding diffs). The gutter adds one new
     // child (REBASE_GUTTER_WIDTH) and one new SP_SM spacing slot between it
     // and its neighbours, so we shift the header right by the same amount.
     const HEADER_LEADING_SPACER: f32 = 92.0 + REBASE_GUTTER_WIDTH + theme::SP_SM as f32;
-    container(
-        row![
-            Space::with_width(Length::Fixed(HEADER_LEADING_SPACER)),
-            container(
-                text("ACTION")
-                    .size(theme::FS_XS)
-                    .font(theme::font_semibold())
-                    .color(color::TEXT_SUBTLE),
-            )
-            .width(Length::Fixed(ACTION_COLUMN_WIDTH)),
-            Space::with_width(Length::Fixed(theme::SP_MD as f32)),
-            container(
-                text("SHA")
-                    .size(theme::FS_XS)
-                    .font(theme::font_semibold())
-                    .color(color::TEXT_SUBTLE),
-            )
-            .width(Length::Fixed(SHA_COLUMN_WIDTH)),
-            Space::with_width(Length::Fixed(theme::SP_MD as f32)),
-            text("MESSAGE")
+    let message = text("MESSAGE")
+        .size(theme::FS_XS)
+        .font(theme::font_semibold())
+        .wrapping(Wrapping::None)
+        .color(color::TEXT_SUBTLE);
+    let message: Element<'a, Message> = if show_author_email {
+        container(message)
+            .height(Length::Fixed(theme::FS_XS as f32 * 1.3))
+            .clip(true)
+            .into()
+    } else {
+        message.into()
+    };
+    let mut content = row![
+        Space::with_width(Length::Fixed(HEADER_LEADING_SPACER)),
+        container(
+            text("ACTION")
                 .size(theme::FS_XS)
                 .font(theme::font_semibold())
+                .wrapping(Wrapping::None)
                 .color(color::TEXT_SUBTLE),
-        ]
-        .align_y(Alignment::Center),
+        )
+        .width(Length::Fixed(ACTION_COLUMN_WIDTH)),
+        Space::with_width(Length::Fixed(theme::SP_MD as f32)),
+        container(
+            text("SHA")
+                .size(theme::FS_XS)
+                .font(theme::font_semibold())
+                .wrapping(Wrapping::None)
+                .color(color::TEXT_SUBTLE),
+        )
+        .width(Length::Fixed(SHA_COLUMN_WIDTH)),
+        Space::with_width(Length::Fixed(theme::SP_MD as f32)),
+        container(message).width(Length::Fill),
+    ]
+    .align_y(Alignment::Center);
+    if show_author_email {
+        content = content
+            .push(Space::with_width(Length::Fixed(theme::SP_SM as f32)))
+            .push(
+                container(
+                    text("EMAIL")
+                        .size(theme::FS_XS)
+                        .font(theme::font_semibold())
+                        .wrapping(Wrapping::None)
+                        .color(color::TEXT_SUBTLE),
+                )
+                .width(Length::Fixed(PROMOTION_EMAIL_COLUMN_WIDTH)),
+            );
+    }
+
+    container(content)
+        .padding(Padding::from([8, theme::SP_LG]))
+        .width(Length::Fill)
+        .style(styles::commit_list_header)
+        .into()
+}
+
+fn promotion_author_email<'a>(email: &'a str, dropped: bool) -> Element<'a, Message> {
+    if email.is_empty() {
+        return Space::new(
+            Length::Fixed(PROMOTION_EMAIL_COLUMN_WIDTH),
+            Length::Fixed(ROW_HEIGHT),
+        )
+        .into();
+    }
+
+    let value = container(
+        text(email)
+            .size(theme::FS_XS)
+            .font(iced::Font::MONOSPACE)
+            .wrapping(Wrapping::None)
+            .color(if dropped {
+                color::TEXT_SUBTLE
+            } else {
+                color::TEXT_MUTED
+            }),
     )
-    .padding(Padding::from([8, theme::SP_LG]))
-    .width(Length::Fill)
-    .style(styles::commit_list_header)
-    .into()
+    .height(Length::Fixed(theme::FS_XS as f32 * 1.3))
+    .clip(true);
+    let cell = container(value)
+        .width(Length::Fixed(PROMOTION_EMAIL_COLUMN_WIDTH))
+        .center_y(Length::Fixed(ROW_HEIGHT))
+        .clip(true);
+    let tooltip_body = container(
+        text(email)
+            .size(theme::FS_XS)
+            .font(iced::Font::MONOSPACE)
+            .wrapping(Wrapping::None)
+            .color(color::TEXT),
+    )
+    .padding(Padding::from([4, 8]))
+    .style(styles::inset_card);
+
+    iced::widget::tooltip(cell, tooltip_body, iced::widget::tooltip::Position::Bottom).into()
 }
 
 fn plan_row<'a>(
@@ -610,7 +701,9 @@ fn plan_row<'a>(
     gutter_row: GraphRow,
     inherits_reword: bool,
     avatars: &'a AvatarCache,
+    show_author_email: bool,
 ) -> Element<'a, Message> {
+    let dropped = row_data.action == RebaseAction::Drop;
     let selected = session.selected == index;
     let drag_active = session.drag.as_ref().is_some_and(|drag| drag.started);
     let dragging_source = session
@@ -697,7 +790,7 @@ fn plan_row<'a>(
             .size(theme::FS_SM)
             .into()
     } else {
-        text(row_data.commit.summary.clone())
+        let summary = text(row_data.commit.summary.clone())
             .size(theme::FS_SM)
             .font(if selected {
                 theme::font_semibold()
@@ -708,11 +801,18 @@ fn plan_row<'a>(
                 color::DANGER
             } else {
                 color::TEXT
-            })
-            .into()
+            });
+        if show_author_email {
+            container(summary.wrapping(Wrapping::None))
+                .height(Length::Fixed(theme::FS_SM as f32 * 1.3))
+                .clip(true)
+                .into()
+        } else {
+            summary.into()
+        }
     };
 
-    let content = row![
+    let mut content = row![
         bar,
         gutter,
         up,
@@ -725,6 +825,12 @@ fn plan_row<'a>(
     ]
     .spacing(theme::SP_SM)
     .align_y(Alignment::Center);
+    if show_author_email {
+        content = content.push(promotion_author_email(
+            &row_data.commit.author_email,
+            dropped,
+        ));
+    }
 
     let content = container(content)
         .height(Length::Fixed(ROW_HEIGHT))
