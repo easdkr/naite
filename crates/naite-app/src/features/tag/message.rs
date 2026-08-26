@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use naite_core::{CommitSummary, RefSummary};
 
 use crate::state::TagNameMode;
@@ -6,6 +8,12 @@ use crate::state::TagNameMode;
 pub enum Message {
     CreateRequested(Option<CommitSummary>),
     CreateAndPushRequested(Option<CommitSummary>),
+    LocalUtcOffsetLoaded {
+        repo_path: PathBuf,
+        target_commit: Option<CommitSummary>,
+        push_after_create: bool,
+        result: Result<i32, String>,
+    },
     CreateNameChanged(String),
     CreateNameModeChanged(TagNameMode),
     CreatePushAfterChanged(bool),

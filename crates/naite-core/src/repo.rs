@@ -34,6 +34,21 @@ impl Repository {
         Ok((!email.is_empty()).then(|| email.to_string()))
     }
 
+    pub fn local_utc_offset_minutes(&self) -> Result<i32, Error> {
+        let output = self.git(&[
+            "-c",
+            "user.name=naite",
+            "-c",
+            "user.email=naite@localhost",
+            "var",
+            "GIT_COMMITTER_IDENT",
+        ])?;
+        parse_git_committer_ident_utc_offset(&output).ok_or_else(|| Error::GitCommand {
+            command: "git var GIT_COMMITTER_IDENT".into(),
+            stderr: "unexpected UTC offset in Git committer identity".into(),
+        })
+    }
+
     pub fn init(path: impl AsRef<Path>) -> Result<PathBuf, Error> {
         let path = path.as_ref();
         let _ = command::run_git(path, ["init"])?;
@@ -104,6 +119,26 @@ impl Repository {
     }
 }
 
+fn parse_git_committer_ident_utc_offset(output: &str) -> Option<i32> {
+    let offset = output.split_whitespace().next_back()?.as_bytes();
+    if offset.len() != 5 || !offset[1..].iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+
+    let hours = i32::from(offset[1] - b'0') * 10 + i32::from(offset[2] - b'0');
+    let minutes = i32::from(offset[3] - b'0') * 10 + i32::from(offset[4] - b'0');
+    if hours > 23 || minutes > 59 {
+        return None;
+    }
+
+    let total = hours * 60 + minutes;
+    match offset[0] {
+        b'+' => Some(total),
+        b'-' => Some(-total),
+        _ => None,
+    }
+}
+
 pub(crate) fn clone_directory_name(url: &str) -> Option<String> {
     let trimmed = url.trim_end_matches('/');
     let last_segment = trimmed
@@ -136,5 +171,21 @@ mod tests {
             Some("naite".into())
         );
         assert_eq!(clone_directory_name(""), None);
+    }
+
+    #[test]
+    fn git_committer_ident_utc_offset_parses_signed_hhmm() {
+        assert_eq!(
+            parse_git_committer_ident_utc_offset("June <june@example.com> 1787719380 +0900"),
+            Some(540)
+        );
+        assert_eq!(
+            parse_git_committer_ident_utc_offset("June <june@example.com> 1787719380 -0530"),
+            Some(-330)
+        );
+        assert_eq!(
+            parse_git_committer_ident_utc_offset("June <june@example.com> 1787719380 +0960"),
+            None
+        );
     }
 }
