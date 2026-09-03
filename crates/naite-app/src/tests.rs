@@ -9764,6 +9764,27 @@ fn operation_tracker_restart_after_complete_does_not_duplicate_in_flight() {
 }
 
 #[test]
+fn operation_tracker_start_with_id_replaces_same_kind_in_flight() {
+    let mut tracker = OperationTracker::default();
+
+    tracker
+        .start_with_id(1, OperationKind::AutoFetch, "first")
+        .unwrap();
+    tracker
+        .start_with_id(2, OperationKind::AutoFetch, "second")
+        .unwrap();
+
+    assert_eq!(
+        tracker.active().len(),
+        1,
+        "one operation kind must render only one active status"
+    );
+    assert_eq!(tracker.active()[0].id, 2);
+    assert_eq!(tracker.active()[0].label, "second");
+    assert_eq!(tracker.current_id_for(&OperationKind::AutoFetch), Some(2));
+}
+
+#[test]
 fn operation_tracker_fail_records_completion_with_fatal_severity() {
     let mut tracker = OperationTracker::default();
     let id = tracker.start(OperationKind::ManualAction("rebase"), "rebase onto main");

@@ -243,12 +243,9 @@ pub struct OperationTracker {
     in_flight: Vec<ActiveOperation>,
     history: VecDeque<CompletedOperation>,
     next_id: OperationId,
-    /// Tracks the most recent in-flight id keyed by `OperationKind` so that
-    /// feature update handlers can complete an operation they did not start
-    /// themselves (e.g. `auto_fetch` results arrive on a different message
-    /// path than the start site). The invariant — at most one in-flight
-    /// operation per `OperationKind` — is enforced by the feature guards
-    /// (e.g. `if self.operation.loading { return Task::none(); }`).
+    /// Tracks the most recent in-flight id keyed by `OperationKind`.
+    /// `replace_active` enforces at most one in-flight operation per kind,
+    /// even when stale or repeated `Started` events reach the tracker.
     current: HashMap<OperationKind, OperationId>,
 }
 
@@ -267,14 +264,7 @@ impl OperationTracker {
     pub fn start(&mut self, kind: OperationKind, label: impl Into<String>) -> OperationId {
         self.next_id = self.next_id.wrapping_add(1);
         let id = self.next_id;
-        self.in_flight.push(ActiveOperation {
-            id,
-            kind: kind.clone(),
-            label: label.into(),
-            started_at: Instant::now(),
-            step: None,
-        });
-        self.current.insert(kind, id);
+        self.replace_active(id, kind, label.into());
         id
     }
 
@@ -288,15 +278,20 @@ impl OperationTracker {
             return Err(OperationTrackerError::UnknownOperation(id));
         }
         self.next_id = self.next_id.max(id);
+        self.replace_active(id, kind, label.into());
+        Ok(())
+    }
+
+    fn replace_active(&mut self, id: OperationId, kind: OperationKind, label: String) {
+        self.in_flight.retain(|op| op.kind != kind);
+        self.current.insert(kind.clone(), id);
         self.in_flight.push(ActiveOperation {
             id,
-            kind: kind.clone(),
-            label: label.into(),
+            kind,
+            label,
             started_at: Instant::now(),
             step: None,
         });
-        self.current.insert(kind, id);
-        Ok(())
     }
 
     pub fn update_step(
