@@ -1,5 +1,17 @@
+use std::time::Duration;
+
+use crate::command::run_command_with_timeout;
 use crate::repo::Repository;
 use crate::Error;
+
+/// Hard deadline for a single fetch. A hung network or SSH handshake must
+/// not block the caller forever; on expiry the child is killed so it cannot
+/// keep holding `FETCH_HEAD`/ref locks.
+const FETCH_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Never block on a credential prompt: a background fetch has no terminal,
+/// so a prompt would hang the worker until the timeout kills it.
+const FETCH_ENVS: [(&str, &str); 1] = [("GIT_TERMINAL_PROMPT", "0")];
 
 impl Repository {
     pub fn fetch_current_remote(&self) -> Result<(), Error> {
@@ -10,12 +22,26 @@ impl Repository {
             .filter(|remote| !remote.is_empty())
             .ok_or(Error::NoUpstream)?;
 
-        let _ = self.git(&["fetch", "--tags", remote])?;
+        let cwd = self.workdir().unwrap_or_else(|| self.path());
+        let _ = run_command_with_timeout(
+            "git",
+            cwd,
+            ["fetch", "--tags", remote],
+            &FETCH_ENVS,
+            FETCH_TIMEOUT,
+        )?;
         Ok(())
     }
 
     pub fn fetch_all_remotes(&self) -> Result<(), Error> {
-        let _ = self.git(&["fetch", "--all", "--tags"])?;
+        let cwd = self.workdir().unwrap_or_else(|| self.path());
+        let _ = run_command_with_timeout(
+            "git",
+            cwd,
+            ["fetch", "--all", "--tags"],
+            &FETCH_ENVS,
+            FETCH_TIMEOUT,
+        )?;
         Ok(())
     }
 }

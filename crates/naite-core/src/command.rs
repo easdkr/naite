@@ -249,6 +249,117 @@ fn is_index_lock_stderr(stderr: &str) -> bool {
         || lower.contains("another git process seems to be running")
 }
 
+/// Run a command with piped output and a hard deadline. On expiry the child
+/// is killed and reaped, so a hung network/credential prompt cannot leak a
+/// process holding ref locks (`FETCH_HEAD.lock`) or block a worker thread
+/// forever. Unlike [`run_git_command`], there is no index-lock retry: this
+/// is intended for network-bound commands (fetch) where a lock failure
+/// should surface immediately.
+pub(crate) fn run_command_with_timeout<I, S, K, V>(
+    program: &str,
+    cwd: &Path,
+    args: I,
+    envs: &[(K, V)],
+    timeout: Duration,
+) -> Result<String, Error>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+    K: AsRef<OsStr>,
+    V: AsRef<OsStr>,
+{
+    let args: Vec<OsString> = args
+        .into_iter()
+        .map(|arg| arg.as_ref().to_os_string())
+        .collect();
+    let command = format_command(program, &args);
+
+    let mut cmd = Command::new(program);
+    cmd.args(&args)
+        .current_dir(cwd)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    for (key, value) in envs {
+        cmd.env(key, value);
+    }
+
+    let mut child = cmd.spawn().map_err(|source| {
+        if source.kind() == std::io::ErrorKind::NotFound && program == "git" {
+            Error::GitNotFound
+        } else {
+            Error::GitCommand {
+                command: command.clone(),
+                stderr: source.to_string(),
+            }
+        }
+    })?;
+
+    // Drain both pipes on reader threads: if the child fills a pipe buffer
+    // while we only poll `try_wait`, it blocks on write and never exits,
+    // which would turn every chatty command into a spurious timeout.
+    let mut stdout_pipe = child.stdout.take();
+    let mut stderr_pipe = child.stderr.take();
+    let stdout_reader = thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(mut pipe) = stdout_pipe.take() {
+            use std::io::Read;
+            let _ = pipe.read_to_end(&mut buf);
+        }
+        buf
+    });
+    let stderr_reader = thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(mut pipe) = stderr_pipe.take() {
+            use std::io::Read;
+            let _ = pipe.read_to_end(&mut buf);
+        }
+        buf
+    });
+
+    let deadline = std::time::Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(Error::GitCommand {
+                        command,
+                        stderr: format!(
+                            "command timed out after {}s and was killed",
+                            timeout.as_secs()
+                        ),
+                    });
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+            Err(source) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(Error::GitCommand {
+                    command,
+                    stderr: source.to_string(),
+                });
+            }
+        }
+    };
+
+    let stdout = stdout_reader.join().unwrap_or_default();
+    let stderr = stderr_reader.join().unwrap_or_default();
+    if status.success() {
+        Ok(String::from_utf8_lossy(&stdout).to_string())
+    } else {
+        let stderr = String::from_utf8_lossy(&stderr).trim().to_string();
+        let stderr = if stderr.is_empty() {
+            String::from_utf8_lossy(&stdout).trim().to_string()
+        } else {
+            stderr
+        };
+        Err(Error::GitCommand { command, stderr })
+    }
+}
+
 pub(crate) fn run_git_with_stdin<I, S>(cwd: &Path, args: I, stdin: &str) -> Result<String, Error>
 where
     I: IntoIterator<Item = S>,
@@ -324,6 +435,58 @@ mod tests {
     use crate::test_helpers::TempRepo;
     use std::fs;
     use std::time::Duration;
+
+    #[test]
+    fn run_command_with_timeout_kills_child_past_deadline() {
+        let started = std::time::Instant::now();
+        let result = run_command_with_timeout(
+            "sh",
+            Path::new("/tmp"),
+            ["-c", "sleep 30"],
+            &[] as &[(&str, &str)],
+            Duration::from_millis(200),
+        );
+
+        let elapsed = started.elapsed();
+        match result {
+            Err(Error::GitCommand { stderr, .. }) => {
+                assert!(stderr.contains("timed out"), "unexpected stderr: {stderr}");
+            }
+            other => panic!("expected timeout error, got {other:?}"),
+        }
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "child was not killed promptly: {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn run_command_with_timeout_returns_output_of_fast_command() {
+        let result = run_command_with_timeout(
+            "sh",
+            Path::new("/tmp"),
+            ["-c", "printf hello"],
+            &[] as &[(&str, &str)],
+            Duration::from_secs(5),
+        );
+
+        assert_eq!(result.unwrap(), "hello");
+    }
+
+    #[test]
+    fn run_command_with_timeout_drains_large_pipe_output() {
+        // More than the 64 KiB pipe buffer: without reader threads the child
+        // would block on write and be misreported as a timeout.
+        let result = run_command_with_timeout(
+            "sh",
+            Path::new("/tmp"),
+            ["-c", "yes | head -c 200000"],
+            &[] as &[(&str, &str)],
+            Duration::from_secs(10),
+        );
+
+        assert_eq!(result.unwrap().len(), 200_000);
+    }
 
     #[test]
     fn formats_git_command_for_errors() {
