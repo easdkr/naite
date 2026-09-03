@@ -6,10 +6,10 @@
 //!   active, renders animated spinners for each on the right while the
 //!   summary stays anchored on the left.
 //! - [`bottom_status_bar`] — strip docked against the window bottom
-//!   showing recently-completed operations (success/failure glyphs +
-//!   relative time-ago) and dismissable pills for Recoverable errors.
-//!   Fatal errors are deliberately NOT rendered here — Task 19 routes
-//!   them through a blocking modal instead.
+//!   showing recently-completed foreground operations (success/failure
+//!   glyphs + relative time-ago) and dismissable pills for Recoverable
+//!   errors. Successful background auto-fetches are summarized by the top
+//!   bar instead. Fatal errors are routed through a blocking modal.
 //!
 //! Both widgets are pure: they read the `OperationTracker` (and, for the
 //! top bar, the current repo's `BranchSyncStatus` / `WorktreeStatusDetail`
@@ -25,7 +25,8 @@ use naite_core::{BranchSyncStatus, GitOperationState, WorktreeStatusDetail};
 
 use crate::message::OperationEvent;
 use crate::state::{
-    ActiveOperation, CompletedOperation, OpResult, OpSeverity, OperationId, OperationTracker,
+    ActiveOperation, CompletedOperation, OpResult, OpSeverity, OperationId, OperationKind,
+    OperationTracker,
 };
 use crate::styles;
 use crate::theme::{self, color};
@@ -266,7 +267,7 @@ const ERROR_TEXT_MAX_CHARS: usize = 64;
 /// `Element`. `Task 19` will route the `OperationEvent::Dismissed`
 /// message to `tracker.dismiss(id)`.
 pub fn bottom_status_bar<'a>(tracker: &'a OperationTracker) -> Element<'a, Message> {
-    let visible = visible_recent(&tracker.recent(BOTTOM_BAR_RECENT));
+    let visible = visible_recent(&tracker.recent(usize::MAX));
 
     if visible.is_empty() {
         // Nothing to surface — reserve the slot height to avoid UI jump
@@ -294,18 +295,23 @@ pub fn bottom_status_bar<'a>(tracker: &'a OperationTracker) -> Element<'a, Messa
     }
 }
 
-/// Newest-first, Fatal-filtered view of the tracker's recent history.
+/// Newest-first view of completed operations eligible for the bottom bar.
 fn visible_recent<'a>(recent: &[&'a CompletedOperation]) -> Vec<&'a CompletedOperation> {
     recent
         .iter()
         .rev()
         .copied()
-        .filter(|op| !is_fatal(op))
+        .filter(|op| !is_fatal(op) && !is_successful_auto_fetch(op))
+        .take(BOTTOM_BAR_RECENT)
         .collect()
 }
 
 fn is_fatal(op: &CompletedOperation) -> bool {
     matches!(op.severity, OpSeverity::Fatal)
+}
+
+fn is_successful_auto_fetch(op: &CompletedOperation) -> bool {
+    matches!(&op.kind, OperationKind::AutoFetch) && matches!(&op.result, OpResult::Success)
 }
 
 fn separator_glyph<'a>() -> Element<'a, Message> {
@@ -419,7 +425,7 @@ mod tests {
     fn bottom_bar_skips_fatal_entries_and_keeps_recoverable() {
         let mut tracker = OperationTracker::default();
 
-        let ok_id = tracker.start(OperationKind::AutoFetch, "fetch origin");
+        let ok_id = tracker.start(OperationKind::ManualAction("fetch"), "fetch origin");
         tracker
             .complete(ok_id, OpResult::Success, OpSeverity::Recoverable)
             .unwrap();
@@ -435,6 +441,35 @@ mod tests {
         let visible = visible_recent(&tracker.recent(BOTTOM_BAR_RECENT));
         assert_eq!(visible.len(), 2, "fatal entry must be filtered out");
         assert!(visible.iter().all(|op| !is_fatal(op)));
+    }
+
+    #[test]
+    fn bottom_bar_hides_successful_auto_fetches_without_consuming_history_slots() {
+        let mut tracker = OperationTracker::default();
+
+        let manual_id = tracker.start(OperationKind::ManualAction("pull"), "pull");
+        tracker
+            .complete(manual_id, OpResult::Success, OpSeverity::Recoverable)
+            .unwrap();
+        for label in ["first auto-fetch", "second auto-fetch", "third auto-fetch"] {
+            let id = tracker.start(OperationKind::AutoFetch, label);
+            tracker
+                .complete(id, OpResult::Success, OpSeverity::Recoverable)
+                .unwrap();
+        }
+        let failed_id = tracker.start(OperationKind::AutoFetch, "failed auto-fetch");
+        tracker
+            .fail(failed_id, "offline", OpSeverity::Recoverable)
+            .unwrap();
+
+        let visible = visible_recent(&tracker.recent(usize::MAX));
+
+        assert_eq!(
+            visible.iter().map(|op| op.id).collect::<Vec<_>>(),
+            vec![failed_id, manual_id],
+            "successful background fetches belong only in the top status bar"
+        );
+        assert!(matches!(visible[0].result, OpResult::Failed(_)));
     }
 
     #[test]
